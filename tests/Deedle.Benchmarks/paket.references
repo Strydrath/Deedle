@@ -1,2 +1,4 @@
 BenchmarkDotNet
 FSharp.Core
+NUnit
+FsUnit
