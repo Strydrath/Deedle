@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+<meta charset='utf-8' />
+<title>Deedle.Benchmarks.VirtualBenchmarks-20260817-121128</title>
+
+<style type="text/css">
+	table { border-collapse: collapse; display: block; width: 100%; overflow: auto; }
+	td, th { padding: 6px 13px; border: 1px solid #ddd; text-align: right; }
+	tr { background-color: #fff; border-top: 1px solid #ccc; }
+	tr:nth-child(even) { background: #f8f8f8; }
+</style>
+</head>
+<body>
+<pre><code>
+BenchmarkDotNet v0.13.12, Windows 10 (10.0.19045.7548/22H2/2022Update)
+Intel Core i7-8550U CPU 1.80GHz (Kaby Lake R), 1 CPU, 8 logical and 4 physical cores
+.NET SDK 10.0.111
+  [Host]     : .NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2 DEBUG
+  Job-FFHHFK : .NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2
+</code></pre>
+<pre><code>IterationCount=5  WarmupCount=2  
+</code></pre>
+
+<table>
+<thead><tr><th>Method                   </th><th>Mean         </th><th>Error        </th><th>StdDev     </th><th>Ratio </th><th>RatioSD</th><th>Gen0  </th><th>Gen1  </th><th>Gen2  </th><th>Allocated</th><th>Alloc Ratio</th>
+</tr>
+</thead><tbody><tr><td>FilterRowsBy_OrderedStep</td><td>5,140.4 ns</td><td>803.49 ns</td><td>208.66 ns</td><td>1.00</td><td>0.00</td><td>0.6027</td><td>-</td><td>-</td><td>2536 B</td><td>1.00</td>
+</tr><tr><td>FilterRowsBy_OrderedExactFixed</td><td>5,928.4 ns</td><td>2,726.08 ns</td><td>421.86 ns</td><td>1.15</td><td>0.10</td><td>0.6409</td><td>-</td><td>-</td><td>2688 B</td><td>1.06</td>
+</tr><tr><td>FilterRowsBy_OrderedFullFixed</td><td>4,299.0 ns</td><td>2,186.52 ns</td><td>567.83 ns</td><td>0.84</td><td>0.11</td><td>0.6180</td><td>-</td><td>-</td><td>2592 B</td><td>1.02</td>
+</tr><tr><td>FilterRowsBy_SparseIndexList</td><td>16,007.4 ns</td><td>5,111.86 ns</td><td>1,327.53 ns</td><td>3.12</td><td>0.35</td><td>3.6926</td><td>-</td><td>-</td><td>15568 B</td><td>6.14</td>
+</tr><tr><td>FilterRowsBy_SparseWrongStep</td><td>4,902.4 ns</td><td>2,341.70 ns</td><td>608.13 ns</td><td>0.95</td><td>0.12</td><td>0.5951</td><td>-</td><td>-</td><td>2512 B</td><td>0.99</td>
+</tr><tr><td>FilterRowsBy_MappedColumn_Scan</td><td>67,993,338.9 ns</td><td>77,654,770.97 ns</td><td>12,017,161.77 ns</td><td>13,173.88</td><td>2,084.20</td><td>5666.6667</td><td>444.4444</td><td>-</td><td>24665620 B</td><td>9,726.19</td>
+</tr><tr><td>FilterRowsBy_OrderedStep_Read50</td><td>55,686.6 ns</td><td>10,543.38 ns</td><td>2,738.08 ns</td><td>10.84</td><td>0.62</td><td>9.1553</td><td>-</td><td>-</td><td>38536 B</td><td>15.20</td>
+</tr><tr><td>Slice_VirtualSeries</td><td>1,927.7 ns</td><td>214.89 ns</td><td>33.25 ns</td><td>0.37</td><td>0.02</td><td>0.2937</td><td>-</td><td>-</td><td>1232 B</td><td>0.49</td>
+</tr><tr><td>Lookup_VirtualSeries</td><td>126.8 ns</td><td>49.35 ns</td><td>7.64 ns</td><td>0.02</td><td>0.00</td><td>0.0095</td><td>-</td><td>-</td><td>40 B</td><td>0.02</td>
+</tr><tr><td>MapValues_VirtualSeries</td><td>338.0 ns</td><td>80.60 ns</td><td>12.47 ns</td><td>0.07</td><td>0.00</td><td>0.0858</td><td>-</td><td>-</td><td>360 B</td><td>0.14</td>
+</tr><tr><td>Materialize_SlicedVirtualSeries</td><td>366,928.6 ns</td><td>138,854.96 ns</td><td>36,060.19 ns</td><td>71.37</td><td>6.36</td><td>51.7578</td><td>7.8125</td><td>-</td><td>218884 B</td><td>86.31</td>
+</tr><tr><td>StatsSum_VirtualSeries</td><td>17,075,089.8 ns</td><td>8,061,836.15 ns</td><td>1,247,578.07 ns</td><td>3,319.49</td><td>294.47</td><td>1906.2500</td><td>-</td><td>-</td><td>8000836 B</td><td>3,154.90</td>
+</tr><tr><td>FilterRowsBy_OrdinalLinear</td><td>33,956,882,075.0 ns</td><td>5,212,982,117.21 ns</td><td>806,714,753.04 ns</td><td>6,605,420.40</td><td>439,464.14</td><td>1571000.0000</td><td>1173000.0000</td><td>1172000.0000</td><td>36338138720 B</td><td>14,328,919.05</td>
+</tr></tbody></table>
+</body>
+</html>

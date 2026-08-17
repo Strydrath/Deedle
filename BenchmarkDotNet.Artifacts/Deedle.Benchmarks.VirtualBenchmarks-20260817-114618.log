@@ -1,0 +1,171 @@
+// Validating benchmarks:
+// ***** BenchmarkRunner: Start   *****
+// ***** Found 2 benchmark(s) in total *****
+// ***** Building 1 exe(s) in Parallel: Start   *****
+// start dotnet  restore /p:UseSharedCompilation=false /p:BuildInParallel=false /m:1 /p:Deterministic=true /p:Optimize=true in C:\Magisterka\Kod\Deedle\tests\Deedle.Benchmarks\bin\Release\net10.0\da59efc5-a4d0-481b-9ac5-caa2fda39c55
+// command took 31.31 sec and exited with 0
+// start dotnet  build -c Release --no-restore /p:UseSharedCompilation=false /p:BuildInParallel=false /m:1 /p:Deterministic=true /p:Optimize=true in C:\Magisterka\Kod\Deedle\tests\Deedle.Benchmarks\bin\Release\net10.0\da59efc5-a4d0-481b-9ac5-caa2fda39c55
+// command took 33.53 sec and exited with 0
+// ***** Done, took 00:01:08 (68.5 sec)   *****
+// Found 2 benchmarks:
+//   VirtualBenchmarks.FilterRowsBy_OrdinalLinear: Job-YHMLHS(IterationCount=5, WarmupCount=2)
+//   VirtualBenchmarks.FilterRowsBy_OrdinalLinear: ShortRun(IterationCount=3, LaunchCount=1, WarmupCount=3)
+
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: Wysoka wydajność)
+// **************************
+// Benchmark: VirtualBenchmarks.FilterRowsBy_OrdinalLinear: Job-YHMLHS(IterationCount=5, WarmupCount=2)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet da59efc5-a4d0-481b-9ac5-caa2fda39c55.dll --anonymousPipes 10316 9912 --benchmarkName Deedle.Benchmarks.VirtualBenchmarks.FilterRowsBy_OrdinalLinear --job "IterationCount=5, WarmupCount=2" --benchmarkId 0 in C:\Magisterka\Kod\Deedle\tests\Deedle.Benchmarks\bin\Release\net10.0\da59efc5-a4d0-481b-9ac5-caa2fda39c55\bin\Release\net10.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.13.12
+// Runtime=.NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT VectorSize=256
+// Job: Job-NSISHH(IterationCount=5, WarmupCount=2)
+
+OverheadJitting  1: 1 op, 1019100.00 ns, 1.0191 ms/op
+WorkloadJitting  1: 1 op, 64148170300.00 ns, 64.1482 s/op
+
+WorkloadWarmup   1: 1 op, 54637823400.00 ns, 54.6378 s/op
+WorkloadWarmup   2: 1 op, 57413644400.00 ns, 57.4136 s/op
+
+// BeforeActualRun
+WorkloadActual   1: 1 op, 62056561800.00 ns, 62.0566 s/op
+WorkloadActual   2: 1 op, 61441774800.00 ns, 61.4418 s/op
+WorkloadActual   3: 1 op, 45267847000.00 ns, 45.2678 s/op
+WorkloadActual   4: 1 op, 57747111400.00 ns, 57.7471 s/op
+WorkloadActual   5: 1 op, 54862498300.00 ns, 54.8625 s/op
+
+// AfterActualRun
+WorkloadResult   1: 1 op, 62056561800.00 ns, 62.0566 s/op
+WorkloadResult   2: 1 op, 61441774800.00 ns, 61.4418 s/op
+WorkloadResult   3: 1 op, 45267847000.00 ns, 45.2678 s/op
+WorkloadResult   4: 1 op, 57747111400.00 ns, 57.7471 s/op
+WorkloadResult   5: 1 op, 54862498300.00 ns, 54.8625 s/op
+// GC:  1569 1171 1170 36337857200 1
+// Threading:  0 0 1
+
+// AfterAll
+// Benchmark Process 21512 has exited with code 0.
+
+Mean = 56.275 s, StdErr = 3.045 s (5.41%), N = 5, StdDev = 6.809 s
+Min = 45.268 s, Q1 = 54.862 s, Median = 57.747 s, Q3 = 61.442 s, Max = 62.057 s
+IQR = 6.579 s, LowerFence = 44.994 s, UpperFence = 71.311 s
+ConfidenceInterval = [30.057 s; 82.494 s] (CI 99.9%), Margin = 26.218 s (46.59% of Mean)
+Skewness = -0.63, Kurtosis = 1.54, MValue = 2
+
+// ** Remained 1 (50,0%) benchmark(s) to run. Estimated finish 2026-08-17 12:04 (0h 8m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: Wysoka wydajność)
+// **************************
+// Benchmark: VirtualBenchmarks.FilterRowsBy_OrdinalLinear: ShortRun(IterationCount=3, LaunchCount=1, WarmupCount=3)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet da59efc5-a4d0-481b-9ac5-caa2fda39c55.dll --anonymousPipes 10248 2352 --benchmarkName Deedle.Benchmarks.VirtualBenchmarks.FilterRowsBy_OrdinalLinear --job ShortRun --benchmarkId 1 in C:\Magisterka\Kod\Deedle\tests\Deedle.Benchmarks\bin\Release\net10.0\da59efc5-a4d0-481b-9ac5-caa2fda39c55\bin\Release\net10.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.13.12
+// Runtime=.NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT VectorSize=256
+// Job: ShortRun(IterationCount=3, LaunchCount=1, WarmupCount=3)
+
+OverheadJitting  1: 1 op, 1402500.00 ns, 1.4025 ms/op
+WorkloadJitting  1: 1 op, 51643959700.00 ns, 51.6440 s/op
+
+WorkloadWarmup   1: 1 op, 40934653100.00 ns, 40.9347 s/op
+WorkloadWarmup   2: 1 op, 44694044400.00 ns, 44.6940 s/op
+WorkloadWarmup   3: 1 op, 55965448600.00 ns, 55.9654 s/op
+
+// BeforeActualRun
+WorkloadActual   1: 1 op, 51555288000.00 ns, 51.5553 s/op
+WorkloadActual   2: 1 op, 46696186500.00 ns, 46.6962 s/op
+WorkloadActual   3: 1 op, 40615501700.00 ns, 40.6155 s/op
+
+// AfterActualRun
+WorkloadResult   1: 1 op, 51555288000.00 ns, 51.5553 s/op
+WorkloadResult   2: 1 op, 46696186500.00 ns, 46.6962 s/op
+WorkloadResult   3: 1 op, 40615501700.00 ns, 40.6155 s/op
+// GC:  1580 1182 1181 36271082928 1
+// Threading:  0 0 1
+
+// AfterAll
+// Benchmark Process 29864 has exited with code 0.
+
+Mean = 46.289 s, StdErr = 3.165 s (6.84%), N = 3, StdDev = 5.481 s
+Min = 40.616 s, Q1 = 43.656 s, Median = 46.696 s, Q3 = 49.126 s, Max = 51.555 s
+IQR = 5.470 s, LowerFence = 35.451 s, UpperFence = 57.331 s
+ConfidenceInterval = [-53.709 s; 146.287 s] (CI 99.9%), Margin = 99.998 s (216.03% of Mean)
+Skewness = -0.07, Kurtosis = 0.67, MValue = 2
+
+// ** Remained 0 (0,0%) benchmark(s) to run. Estimated finish 2026-08-17 12:02 (0h 0m from now) **
+Successfully reverted power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: Wysoka wydajność)
+// ***** BenchmarkRunner: Finish  *****
+
+// * Export *
+  BenchmarkDotNet.Artifacts\results\Deedle.Benchmarks.VirtualBenchmarks-report.csv
+  BenchmarkDotNet.Artifacts\results\Deedle.Benchmarks.VirtualBenchmarks-report-github.md
+  BenchmarkDotNet.Artifacts\results\Deedle.Benchmarks.VirtualBenchmarks-report.html
+
+// * Detailed results *
+VirtualBenchmarks.FilterRowsBy_OrdinalLinear: Job-YHMLHS(IterationCount=5, WarmupCount=2)
+Runtime = .NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 56.275 s, StdErr = 3.045 s (5.41%), N = 5, StdDev = 6.809 s
+Min = 45.268 s, Q1 = 54.862 s, Median = 57.747 s, Q3 = 61.442 s, Max = 62.057 s
+IQR = 6.579 s, LowerFence = 44.994 s, UpperFence = 71.311 s
+ConfidenceInterval = [30.057 s; 82.494 s] (CI 99.9%), Margin = 26.218 s (46.59% of Mean)
+Skewness = -0.63, Kurtosis = 1.54, MValue = 2
+-------------------- Histogram --------------------
+[40.042 s ; 50.494 s) | @
+[50.494 s ; 63.686 s) | @@@@
+---------------------------------------------------
+
+VirtualBenchmarks.FilterRowsBy_OrdinalLinear: ShortRun(IterationCount=3, LaunchCount=1, WarmupCount=3)
+Runtime = .NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 46.289 s, StdErr = 3.165 s (6.84%), N = 3, StdDev = 5.481 s
+Min = 40.616 s, Q1 = 43.656 s, Median = 46.696 s, Q3 = 49.126 s, Max = 51.555 s
+IQR = 5.470 s, LowerFence = 35.451 s, UpperFence = 57.331 s
+ConfidenceInterval = [-53.709 s; 146.287 s] (CI 99.9%), Margin = 99.998 s (216.03% of Mean)
+Skewness = -0.07, Kurtosis = 0.67, MValue = 2
+-------------------- Histogram --------------------
+[35.627 s ; 44.138 s) | @
+[44.138 s ; 54.114 s) | @@
+---------------------------------------------------
+
+// * Summary *
+
+BenchmarkDotNet v0.13.12, Windows 10 (10.0.19045.7548/22H2/2022Update)
+Intel Core i7-8550U CPU 1.80GHz (Kaby Lake R), 1 CPU, 8 logical and 4 physical cores
+.NET SDK 10.0.111
+  [Host]     : .NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2 DEBUG
+  Job-YHMLHS : .NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2
+  ShortRun   : .NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2
+
+
+| Method                     | Job        | IterationCount | LaunchCount | WarmupCount | Mean    | Error    | StdDev  | Gen0         | Gen1         | Gen2         | Allocated |
+|--------------------------- |----------- |--------------- |------------ |------------ |--------:|---------:|--------:|-------------:|-------------:|-------------:|----------:|
+| FilterRowsBy_OrdinalLinear | Job-YHMLHS | 5              | Default     | 2           | 56.28 s |  26.22 s | 6.809 s | 1569000.0000 | 1171000.0000 | 1170000.0000 |  33.84 GB |
+| FilterRowsBy_OrdinalLinear | ShortRun   | 3              | 1           | 3           | 46.29 s | 100.00 s | 5.481 s | 1580000.0000 | 1182000.0000 | 1181000.0000 |  33.78 GB |
+
+// * Legends *
+  Mean      : Arithmetic mean of all measurements
+  Error     : Half of 99.9% confidence interval
+  StdDev    : Standard deviation of all measurements
+  Gen0      : GC Generation 0 collects per 1000 operations
+  Gen1      : GC Generation 1 collects per 1000 operations
+  Gen2      : GC Generation 2 collects per 1000 operations
+  Allocated : Allocated memory per single operation (managed only, inclusive, 1KB = 1024B)
+  1 s       : 1 Second (1 sec)
+
+// * Diagnostic Output - MemoryDiagnoser *
+
+
+// ***** BenchmarkRunner: End *****
+Run time: 00:14:56 (896.42 sec), executed benchmarks: 2
+
+Global total time: 00:16:07 (967.25 sec), executed benchmarks: 2
+// * Artifacts cleanup *
+Artifacts cleanup is finished

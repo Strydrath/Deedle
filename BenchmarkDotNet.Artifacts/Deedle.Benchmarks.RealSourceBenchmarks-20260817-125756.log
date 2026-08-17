@@ -1,0 +1,482 @@
+// Validating benchmarks:
+// ***** BenchmarkRunner: Start   *****
+// ***** Found 5 benchmark(s) in total *****
+// ***** Building 1 exe(s) in Parallel: Start   *****
+// start dotnet  restore /p:UseSharedCompilation=false /p:BuildInParallel=false /m:1 /p:Deterministic=true /p:Optimize=true in C:\Magisterka\Kod\Deedle\tests\Deedle.Benchmarks\bin\Release\net10.0\fd66331f-57bc-4e84-92a9-1374af418255
+// command took 11.87 sec and exited with 0
+// start dotnet  build -c Release --no-restore /p:UseSharedCompilation=false /p:BuildInParallel=false /m:1 /p:Deterministic=true /p:Optimize=true in C:\Magisterka\Kod\Deedle\tests\Deedle.Benchmarks\bin\Release\net10.0\fd66331f-57bc-4e84-92a9-1374af418255
+// command took 33.08 sec and exited with 0
+// ***** Done, took 00:00:54 (54.09 sec)   *****
+// Found 5 benchmarks:
+//   RealSourceBenchmarks.VirtualCsv_FilterRowsBy_Step: Job-JZITSV(IterationCount=5, WarmupCount=2)
+//   RealSourceBenchmarks.VirtualCsv_Slice1000: Job-JZITSV(IterationCount=5, WarmupCount=2)
+//   RealSourceBenchmarks.VirtualCsv_StatsSum: Job-JZITSV(IterationCount=5, WarmupCount=2)
+//   RealSourceBenchmarks.MaterializedReadCsv_FilterScan: Job-JZITSV(IterationCount=5, WarmupCount=2)
+//   RealSourceBenchmarks.MaterializedReadCsv_StatsSum: Job-JZITSV(IterationCount=5, WarmupCount=2)
+
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: Wysoka wydajność)
+// **************************
+// Benchmark: RealSourceBenchmarks.VirtualCsv_FilterRowsBy_Step: Job-JZITSV(IterationCount=5, WarmupCount=2)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet fd66331f-57bc-4e84-92a9-1374af418255.dll --anonymousPipes 1048 7476 --benchmarkName Deedle.Benchmarks.RealSourceBenchmarks.VirtualCsv_FilterRowsBy_Step --job "IterationCount=5, WarmupCount=2" --benchmarkId 0 in C:\Magisterka\Kod\Deedle\tests\Deedle.Benchmarks\bin\Release\net10.0\fd66331f-57bc-4e84-92a9-1374af418255\bin\Release\net10.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.13.12
+// Runtime=.NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT VectorSize=256
+// Job: Job-ZCXZOA(IterationCount=5, WarmupCount=2)
+
+OverheadJitting  1: 1 op, 619700.00 ns, 619.7000 us/op
+WorkloadJitting  1: 1 op, 63715600.00 ns, 63.7156 ms/op
+
+WorkloadPilot    1: 2 op, 226400.00 ns, 113.2000 us/op
+WorkloadPilot    2: 3 op, 88500.00 ns, 29.5000 us/op
+WorkloadPilot    3: 4 op, 121500.00 ns, 30.3750 us/op
+WorkloadPilot    4: 5 op, 91300.00 ns, 18.2600 us/op
+WorkloadPilot    5: 6 op, 124400.00 ns, 20.7333 us/op
+WorkloadPilot    6: 7 op, 260600.00 ns, 37.2286 us/op
+WorkloadPilot    7: 8 op, 565100.00 ns, 70.6375 us/op
+WorkloadPilot    8: 9 op, 429800.00 ns, 47.7556 us/op
+WorkloadPilot    9: 10 op, 217600.00 ns, 21.7600 us/op
+WorkloadPilot   10: 11 op, 312800.00 ns, 28.4364 us/op
+WorkloadPilot   11: 12 op, 115900.00 ns, 9.6583 us/op
+WorkloadPilot   12: 13 op, 109200.00 ns, 8.4000 us/op
+WorkloadPilot   13: 14 op, 116700.00 ns, 8.3357 us/op
+WorkloadPilot   14: 15 op, 136100.00 ns, 9.0733 us/op
+WorkloadPilot   15: 16 op, 164000.00 ns, 10.2500 us/op
+WorkloadPilot   16: 32 op, 461800.00 ns, 14.4313 us/op
+WorkloadPilot   17: 64 op, 543200.00 ns, 8.4875 us/op
+WorkloadPilot   18: 128 op, 1266300.00 ns, 9.8930 us/op
+WorkloadPilot   19: 256 op, 3647900.00 ns, 14.2496 us/op
+WorkloadPilot   20: 512 op, 10449800.00 ns, 20.4098 us/op
+WorkloadPilot   21: 1024 op, 20164800.00 ns, 19.6922 us/op
+WorkloadPilot   22: 2048 op, 55111700.00 ns, 26.9100 us/op
+WorkloadPilot   23: 4096 op, 77213900.00 ns, 18.8510 us/op
+WorkloadPilot   24: 8192 op, 141995000.00 ns, 17.3334 us/op
+WorkloadPilot   25: 16384 op, 153007500.00 ns, 9.3388 us/op
+WorkloadPilot   26: 32768 op, 250932900.00 ns, 7.6579 us/op
+WorkloadPilot   27: 65536 op, 449419700.00 ns, 6.8576 us/op
+WorkloadPilot   28: 131072 op, 971382300.00 ns, 7.4111 us/op
+
+WorkloadWarmup   1: 131072 op, 739331600.00 ns, 5.6407 us/op
+WorkloadWarmup   2: 131072 op, 799177200.00 ns, 6.0972 us/op
+
+// BeforeActualRun
+WorkloadActual   1: 131072 op, 636126200.00 ns, 4.8533 us/op
+WorkloadActual   2: 131072 op, 600310900.00 ns, 4.5800 us/op
+WorkloadActual   3: 131072 op, 623504500.00 ns, 4.7570 us/op
+WorkloadActual   4: 131072 op, 400821100.00 ns, 3.0580 us/op
+WorkloadActual   5: 131072 op, 415031400.00 ns, 3.1664 us/op
+
+// AfterActualRun
+WorkloadResult   1: 131072 op, 636126200.00 ns, 4.8533 us/op
+WorkloadResult   2: 131072 op, 600310900.00 ns, 4.5800 us/op
+WorkloadResult   3: 131072 op, 623504500.00 ns, 4.7570 us/op
+WorkloadResult   4: 131072 op, 400821100.00 ns, 3.0580 us/op
+WorkloadResult   5: 131072 op, 415031400.00 ns, 3.1664 us/op
+// GC:  78 0 0 329252928 131072
+// Threading:  0 0 131072
+
+// AfterAll
+// Benchmark Process 28884 has exited with code 0.
+
+Mean = 4.083 μs, StdErr = 0.399 μs (9.77%), N = 5, StdDev = 0.892 μs
+Min = 3.058 μs, Q1 = 3.166 μs, Median = 4.580 μs, Q3 = 4.757 μs, Max = 4.853 μs
+IQR = 1.591 μs, LowerFence = 0.781 μs, UpperFence = 7.143 μs
+ConfidenceInterval = [0.647 μs; 7.519 μs] (CI 99.9%), Margin = 3.436 μs (84.16% of Mean)
+Skewness = -0.27, Kurtosis = 0.77, MValue = 2
+
+// ** Remained 4 (80,0%) benchmark(s) to run. Estimated finish 2026-08-17 13:00 (0h 1m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: Wysoka wydajność)
+// **************************
+// Benchmark: RealSourceBenchmarks.VirtualCsv_Slice1000: Job-JZITSV(IterationCount=5, WarmupCount=2)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet fd66331f-57bc-4e84-92a9-1374af418255.dll --anonymousPipes 5620 5208 --benchmarkName Deedle.Benchmarks.RealSourceBenchmarks.VirtualCsv_Slice1000 --job "IterationCount=5, WarmupCount=2" --benchmarkId 1 in C:\Magisterka\Kod\Deedle\tests\Deedle.Benchmarks\bin\Release\net10.0\fd66331f-57bc-4e84-92a9-1374af418255\bin\Release\net10.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.13.12
+// Runtime=.NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT VectorSize=256
+// Job: Job-YYRZZA(IterationCount=5, WarmupCount=2)
+
+OverheadJitting  1: 1 op, 426900.00 ns, 426.9000 us/op
+WorkloadJitting  1: 1 op, 25234700.00 ns, 25.2347 ms/op
+
+OverheadJitting  2: 16 op, 416800.00 ns, 26.0500 us/op
+WorkloadJitting  2: 16 op, 463700.00 ns, 28.9812 us/op
+
+WorkloadPilot    1: 16 op, 127400.00 ns, 7.9625 us/op
+WorkloadPilot    2: 32 op, 147800.00 ns, 4.6188 us/op
+WorkloadPilot    3: 64 op, 208800.00 ns, 3.2625 us/op
+WorkloadPilot    4: 128 op, 416600.00 ns, 3.2547 us/op
+WorkloadPilot    5: 256 op, 2013600.00 ns, 7.8656 us/op
+WorkloadPilot    6: 512 op, 1535300.00 ns, 2.9986 us/op
+WorkloadPilot    7: 1024 op, 2887100.00 ns, 2.8194 us/op
+WorkloadPilot    8: 2048 op, 6664600.00 ns, 3.2542 us/op
+WorkloadPilot    9: 4096 op, 21385500.00 ns, 5.2211 us/op
+WorkloadPilot   10: 8192 op, 33421400.00 ns, 4.0798 us/op
+WorkloadPilot   11: 16384 op, 55689700.00 ns, 3.3990 us/op
+WorkloadPilot   12: 32768 op, 43441800.00 ns, 1.3257 us/op
+WorkloadPilot   13: 65536 op, 81205800.00 ns, 1.2391 us/op
+WorkloadPilot   14: 131072 op, 166180800.00 ns, 1.2679 us/op
+WorkloadPilot   15: 262144 op, 307621100.00 ns, 1.1735 us/op
+WorkloadPilot   16: 524288 op, 423147700.00 ns, 807.0902 ns/op
+WorkloadPilot   17: 1048576 op, 876110500.00 ns, 835.5241 ns/op
+
+OverheadWarmup   1: 1048576 op, 3097600.00 ns, 2.9541 ns/op
+OverheadWarmup   2: 1048576 op, 3332100.00 ns, 3.1777 ns/op
+OverheadWarmup   3: 1048576 op, 3678400.00 ns, 3.5080 ns/op
+OverheadWarmup   4: 1048576 op, 2889900.00 ns, 2.7560 ns/op
+OverheadWarmup   5: 1048576 op, 2912400.00 ns, 2.7775 ns/op
+OverheadWarmup   6: 1048576 op, 3269400.00 ns, 3.1179 ns/op
+OverheadWarmup   7: 1048576 op, 3832000.00 ns, 3.6545 ns/op
+OverheadWarmup   8: 1048576 op, 3927200.00 ns, 3.7453 ns/op
+OverheadWarmup   9: 1048576 op, 3393300.00 ns, 3.2361 ns/op
+
+OverheadActual   1: 1048576 op, 5630800.00 ns, 5.3699 ns/op
+OverheadActual   2: 1048576 op, 5022000.00 ns, 4.7894 ns/op
+OverheadActual   3: 1048576 op, 3022100.00 ns, 2.8821 ns/op
+OverheadActual   4: 1048576 op, 3050200.00 ns, 2.9089 ns/op
+OverheadActual   5: 1048576 op, 3248100.00 ns, 3.0976 ns/op
+OverheadActual   6: 1048576 op, 2941600.00 ns, 2.8053 ns/op
+OverheadActual   7: 1048576 op, 4163400.00 ns, 3.9705 ns/op
+OverheadActual   8: 1048576 op, 3008900.00 ns, 2.8695 ns/op
+OverheadActual   9: 1048576 op, 3044700.00 ns, 2.9037 ns/op
+OverheadActual  10: 1048576 op, 4087200.00 ns, 3.8979 ns/op
+OverheadActual  11: 1048576 op, 4751000.00 ns, 4.5309 ns/op
+OverheadActual  12: 1048576 op, 2383100.00 ns, 2.2727 ns/op
+OverheadActual  13: 1048576 op, 4052300.00 ns, 3.8646 ns/op
+OverheadActual  14: 1048576 op, 2406500.00 ns, 2.2950 ns/op
+OverheadActual  15: 1048576 op, 2548900.00 ns, 2.4308 ns/op
+OverheadActual  16: 1048576 op, 2455400.00 ns, 2.3417 ns/op
+OverheadActual  17: 1048576 op, 2186500.00 ns, 2.0852 ns/op
+OverheadActual  18: 1048576 op, 2627700.00 ns, 2.5060 ns/op
+OverheadActual  19: 1048576 op, 2274900.00 ns, 2.1695 ns/op
+OverheadActual  20: 1048576 op, 2222700.00 ns, 2.1197 ns/op
+
+WorkloadWarmup   1: 1048576 op, 1488283300.00 ns, 1.4193 us/op
+WorkloadWarmup   2: 1048576 op, 1879984400.00 ns, 1.7929 us/op
+
+// BeforeActualRun
+WorkloadActual   1: 1048576 op, 1304678200.00 ns, 1.2442 us/op
+WorkloadActual   2: 1048576 op, 1942291100.00 ns, 1.8523 us/op
+WorkloadActual   3: 1048576 op, 1320928900.00 ns, 1.2597 us/op
+WorkloadActual   4: 1048576 op, 1517791000.00 ns, 1.4475 us/op
+WorkloadActual   5: 1048576 op, 1583831900.00 ns, 1.5105 us/op
+
+// AfterActualRun
+WorkloadResult   1: 1048576 op, 1301662700.00 ns, 1.2414 us/op
+WorkloadResult   2: 1048576 op, 1939275600.00 ns, 1.8494 us/op
+WorkloadResult   3: 1048576 op, 1317913400.00 ns, 1.2569 us/op
+WorkloadResult   4: 1048576 op, 1514775500.00 ns, 1.4446 us/op
+WorkloadResult   5: 1048576 op, 1580816400.00 ns, 1.5076 us/op
+// GC:  304 0 0 1275068480 1048576
+// Threading:  0 0 1048576
+
+// AfterAll
+// Benchmark Process 25200 has exited with code 0.
+
+Mean = 1.460 μs, StdErr = 0.110 μs (7.55%), N = 5, StdDev = 0.247 μs
+Min = 1.241 μs, Q1 = 1.257 μs, Median = 1.445 μs, Q3 = 1.508 μs, Max = 1.849 μs
+IQR = 0.251 μs, LowerFence = 0.881 μs, UpperFence = 1.884 μs
+ConfidenceInterval = [0.510 μs; 2.410 μs] (CI 99.9%), Margin = 0.950 μs (65.04% of Mean)
+Skewness = 0.54, Kurtosis = 1.46, MValue = 2
+
+// ** Remained 3 (60,0%) benchmark(s) to run. Estimated finish 2026-08-17 13:00 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: Wysoka wydajność)
+// **************************
+// Benchmark: RealSourceBenchmarks.VirtualCsv_StatsSum: Job-JZITSV(IterationCount=5, WarmupCount=2)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet fd66331f-57bc-4e84-92a9-1374af418255.dll --anonymousPipes 1016 1020 --benchmarkName Deedle.Benchmarks.RealSourceBenchmarks.VirtualCsv_StatsSum --job "IterationCount=5, WarmupCount=2" --benchmarkId 2 in C:\Magisterka\Kod\Deedle\tests\Deedle.Benchmarks\bin\Release\net10.0\fd66331f-57bc-4e84-92a9-1374af418255\bin\Release\net10.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.13.12
+// Runtime=.NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT VectorSize=256
+// Job: Job-YVIAYU(IterationCount=5, WarmupCount=2)
+
+OverheadJitting  1: 1 op, 543300.00 ns, 543.3000 us/op
+WorkloadJitting  1: 1 op, 148597700.00 ns, 148.5977 ms/op
+
+WorkloadPilot    1: 2 op, 234087700.00 ns, 117.0439 ms/op
+WorkloadPilot    2: 3 op, 132070300.00 ns, 44.0234 ms/op
+WorkloadPilot    3: 4 op, 285841800.00 ns, 71.4604 ms/op
+WorkloadPilot    4: 5 op, 329381000.00 ns, 65.8762 ms/op
+WorkloadPilot    5: 6 op, 256430300.00 ns, 42.7384 ms/op
+WorkloadPilot    6: 7 op, 342996700.00 ns, 48.9995 ms/op
+WorkloadPilot    7: 8 op, 408008900.00 ns, 51.0011 ms/op
+WorkloadPilot    8: 9 op, 655829300.00 ns, 72.8699 ms/op
+
+WorkloadWarmup   1: 9 op, 676334900.00 ns, 75.1483 ms/op
+WorkloadWarmup   2: 9 op, 506303100.00 ns, 56.2559 ms/op
+
+// BeforeActualRun
+WorkloadActual   1: 9 op, 589641000.00 ns, 65.5157 ms/op
+WorkloadActual   2: 9 op, 612169000.00 ns, 68.0188 ms/op
+WorkloadActual   3: 9 op, 526085100.00 ns, 58.4539 ms/op
+WorkloadActual   4: 9 op, 531403900.00 ns, 59.0449 ms/op
+WorkloadActual   5: 9 op, 496032100.00 ns, 55.1147 ms/op
+
+// AfterActualRun
+WorkloadResult   1: 9 op, 589641000.00 ns, 65.5157 ms/op
+WorkloadResult   2: 9 op, 612169000.00 ns, 68.0188 ms/op
+WorkloadResult   3: 9 op, 526085100.00 ns, 58.4539 ms/op
+WorkloadResult   4: 9 op, 531403900.00 ns, 59.0449 ms/op
+WorkloadResult   5: 9 op, 496032100.00 ns, 55.1147 ms/op
+// GC:  119 0 0 499686832 9
+// Threading:  0 0 9
+
+// AfterAll
+// Benchmark Process 35132 has exited with code 0.
+
+Mean = 61.230 ms, StdErr = 2.391 ms (3.90%), N = 5, StdDev = 5.346 ms
+Min = 55.115 ms, Q1 = 58.454 ms, Median = 59.045 ms, Q3 = 65.516 ms, Max = 68.019 ms
+IQR = 7.062 ms, LowerFence = 47.861 ms, UpperFence = 76.108 ms
+ConfidenceInterval = [40.643 ms; 81.816 ms] (CI 99.9%), Margin = 20.587 ms (33.62% of Mean)
+Skewness = 0.17, Kurtosis = 0.97, MValue = 2
+
+// ** Remained 2 (40,0%) benchmark(s) to run. Estimated finish 2026-08-17 13:00 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: Wysoka wydajność)
+// **************************
+// Benchmark: RealSourceBenchmarks.MaterializedReadCsv_FilterScan: Job-JZITSV(IterationCount=5, WarmupCount=2)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet fd66331f-57bc-4e84-92a9-1374af418255.dll --anonymousPipes 9792 1012 --benchmarkName Deedle.Benchmarks.RealSourceBenchmarks.MaterializedReadCsv_FilterScan --job "IterationCount=5, WarmupCount=2" --benchmarkId 3 in C:\Magisterka\Kod\Deedle\tests\Deedle.Benchmarks\bin\Release\net10.0\fd66331f-57bc-4e84-92a9-1374af418255\bin\Release\net10.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.13.12
+// Runtime=.NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT VectorSize=256
+// Job: Job-TKXLGZ(IterationCount=5, WarmupCount=2)
+
+OverheadJitting  1: 1 op, 387200.00 ns, 387.2000 us/op
+WorkloadJitting  1: 1 op, 34840900.00 ns, 34.8409 ms/op
+
+WorkloadPilot    1: 2 op, 28505800.00 ns, 14.2529 ms/op
+WorkloadPilot    2: 3 op, 25848400.00 ns, 8.6161 ms/op
+WorkloadPilot    3: 4 op, 51044500.00 ns, 12.7611 ms/op
+WorkloadPilot    4: 5 op, 16342900.00 ns, 3.2686 ms/op
+WorkloadPilot    5: 6 op, 15788000.00 ns, 2.6313 ms/op
+WorkloadPilot    6: 7 op, 20419700.00 ns, 2.9171 ms/op
+WorkloadPilot    7: 8 op, 21878300.00 ns, 2.7348 ms/op
+WorkloadPilot    8: 9 op, 44021700.00 ns, 4.8913 ms/op
+WorkloadPilot    9: 10 op, 35416000.00 ns, 3.5416 ms/op
+WorkloadPilot   10: 11 op, 34493100.00 ns, 3.1357 ms/op
+WorkloadPilot   11: 12 op, 53811800.00 ns, 4.4843 ms/op
+WorkloadPilot   12: 13 op, 37630100.00 ns, 2.8946 ms/op
+WorkloadPilot   13: 14 op, 39795100.00 ns, 2.8425 ms/op
+WorkloadPilot   14: 15 op, 59757000.00 ns, 3.9838 ms/op
+WorkloadPilot   15: 16 op, 73704200.00 ns, 4.6065 ms/op
+WorkloadPilot   16: 32 op, 123753600.00 ns, 3.8673 ms/op
+WorkloadPilot   17: 64 op, 201654600.00 ns, 3.1509 ms/op
+WorkloadPilot   18: 128 op, 396580900.00 ns, 3.0983 ms/op
+WorkloadPilot   19: 256 op, 804230800.00 ns, 3.1415 ms/op
+
+WorkloadWarmup   1: 256 op, 731089800.00 ns, 2.8558 ms/op
+WorkloadWarmup   2: 256 op, 870198900.00 ns, 3.3992 ms/op
+
+// BeforeActualRun
+WorkloadActual   1: 256 op, 754843900.00 ns, 2.9486 ms/op
+WorkloadActual   2: 256 op, 747731600.00 ns, 2.9208 ms/op
+WorkloadActual   3: 256 op, 826397800.00 ns, 3.2281 ms/op
+WorkloadActual   4: 256 op, 744987300.00 ns, 2.9101 ms/op
+WorkloadActual   5: 256 op, 1124497400.00 ns, 4.3926 ms/op
+
+// AfterActualRun
+WorkloadResult   1: 256 op, 754843900.00 ns, 2.9486 ms/op
+WorkloadResult   2: 256 op, 747731600.00 ns, 2.9208 ms/op
+WorkloadResult   3: 256 op, 826397800.00 ns, 3.2281 ms/op
+WorkloadResult   4: 256 op, 744987300.00 ns, 2.9101 ms/op
+// GC:  0 0 0 22592 256
+// Threading:  0 0 256
+
+// AfterAll
+// Benchmark Process 12716 has exited with code 0.
+
+Mean = 3.002 ms, StdErr = 0.076 ms (2.53%), N = 4, StdDev = 0.152 ms
+Min = 2.910 ms, Q1 = 2.918 ms, Median = 2.935 ms, Q3 = 3.018 ms, Max = 3.228 ms
+IQR = 0.100 ms, LowerFence = 2.768 ms, UpperFence = 3.169 ms
+ConfidenceInterval = [2.022 ms; 3.982 ms] (CI 99.9%), Margin = 0.980 ms (32.65% of Mean)
+Skewness = 0.72, Kurtosis = 1.29, MValue = 2
+
+// ** Remained 1 (20,0%) benchmark(s) to run. Estimated finish 2026-08-17 13:00 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: Wysoka wydajność)
+// **************************
+// Benchmark: RealSourceBenchmarks.MaterializedReadCsv_StatsSum: Job-JZITSV(IterationCount=5, WarmupCount=2)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet fd66331f-57bc-4e84-92a9-1374af418255.dll --anonymousPipes 640 2860 --benchmarkName Deedle.Benchmarks.RealSourceBenchmarks.MaterializedReadCsv_StatsSum --job "IterationCount=5, WarmupCount=2" --benchmarkId 4 in C:\Magisterka\Kod\Deedle\tests\Deedle.Benchmarks\bin\Release\net10.0\fd66331f-57bc-4e84-92a9-1374af418255\bin\Release\net10.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.13.12
+// Runtime=.NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT VectorSize=256
+// Job: Job-UKJWMC(IterationCount=5, WarmupCount=2)
+
+OverheadJitting  1: 1 op, 454100.00 ns, 454.1000 us/op
+WorkloadJitting  1: 1 op, 147562300.00 ns, 147.5623 ms/op
+
+WorkloadPilot    1: 2 op, 185310300.00 ns, 92.6552 ms/op
+WorkloadPilot    2: 3 op, 198978300.00 ns, 66.3261 ms/op
+WorkloadPilot    3: 4 op, 96796000.00 ns, 24.1990 ms/op
+WorkloadPilot    4: 5 op, 129845900.00 ns, 25.9692 ms/op
+WorkloadPilot    5: 6 op, 169625500.00 ns, 28.2709 ms/op
+WorkloadPilot    6: 7 op, 274005700.00 ns, 39.1437 ms/op
+WorkloadPilot    7: 8 op, 424838300.00 ns, 53.1048 ms/op
+WorkloadPilot    8: 9 op, 437982100.00 ns, 48.6647 ms/op
+WorkloadPilot    9: 10 op, 498038000.00 ns, 49.8038 ms/op
+WorkloadPilot   10: 11 op, 574482200.00 ns, 52.2257 ms/op
+
+WorkloadWarmup   1: 11 op, 397587400.00 ns, 36.1443 ms/op
+WorkloadWarmup   2: 11 op, 527666100.00 ns, 47.9696 ms/op
+
+// BeforeActualRun
+WorkloadActual   1: 11 op, 448392200.00 ns, 40.7629 ms/op
+WorkloadActual   2: 11 op, 550321500.00 ns, 50.0292 ms/op
+WorkloadActual   3: 11 op, 472213300.00 ns, 42.9285 ms/op
+WorkloadActual   4: 11 op, 525757300.00 ns, 47.7961 ms/op
+WorkloadActual   5: 11 op, 447742500.00 ns, 40.7039 ms/op
+
+// AfterActualRun
+WorkloadResult   1: 11 op, 448392200.00 ns, 40.7629 ms/op
+WorkloadResult   2: 11 op, 550321500.00 ns, 50.0292 ms/op
+WorkloadResult   3: 11 op, 472213300.00 ns, 42.9285 ms/op
+WorkloadResult   4: 11 op, 525757300.00 ns, 47.7961 ms/op
+WorkloadResult   5: 11 op, 447742500.00 ns, 40.7039 ms/op
+// GC:  63 0 0 290408512 11
+// Threading:  0 0 11
+
+// AfterAll
+// Benchmark Process 11412 has exited with code 0.
+
+Mean = 44.444 ms, StdErr = 1.901 ms (4.28%), N = 5, StdDev = 4.251 ms
+Min = 40.704 ms, Q1 = 40.763 ms, Median = 42.928 ms, Q3 = 47.796 ms, Max = 50.029 ms
+IQR = 7.033 ms, LowerFence = 30.213 ms, UpperFence = 58.346 ms
+ConfidenceInterval = [28.077 ms; 60.811 ms] (CI 99.9%), Margin = 16.367 ms (36.83% of Mean)
+Skewness = 0.28, Kurtosis = 0.91, MValue = 2
+
+// ** Remained 0 (0,0%) benchmark(s) to run. Estimated finish 2026-08-17 13:00 (0h 0m from now) **
+Successfully reverted power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: Wysoka wydajność)
+// ***** BenchmarkRunner: Finish  *****
+
+// * Export *
+  BenchmarkDotNet.Artifacts\results\Deedle.Benchmarks.RealSourceBenchmarks-report.csv
+  BenchmarkDotNet.Artifacts\results\Deedle.Benchmarks.RealSourceBenchmarks-report-github.md
+  BenchmarkDotNet.Artifacts\results\Deedle.Benchmarks.RealSourceBenchmarks-report.html
+
+// * Detailed results *
+RealSourceBenchmarks.VirtualCsv_FilterRowsBy_Step: Job-JZITSV(IterationCount=5, WarmupCount=2)
+Runtime = .NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 4.083 μs, StdErr = 0.399 μs (9.77%), N = 5, StdDev = 0.892 μs
+Min = 3.058 μs, Q1 = 3.166 μs, Median = 4.580 μs, Q3 = 4.757 μs, Max = 4.853 μs
+IQR = 1.591 μs, LowerFence = 0.781 μs, UpperFence = 7.143 μs
+ConfidenceInterval = [0.647 μs; 7.519 μs] (CI 99.9%), Margin = 3.436 μs (84.16% of Mean)
+Skewness = -0.27, Kurtosis = 0.77, MValue = 2
+-------------------- Histogram --------------------
+[2.373 μs ; 4.032 μs) | @@
+[4.032 μs ; 5.538 μs) | @@@
+---------------------------------------------------
+
+RealSourceBenchmarks.VirtualCsv_Slice1000: Job-JZITSV(IterationCount=5, WarmupCount=2)
+Runtime = .NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 1.460 μs, StdErr = 0.110 μs (7.55%), N = 5, StdDev = 0.247 μs
+Min = 1.241 μs, Q1 = 1.257 μs, Median = 1.445 μs, Q3 = 1.508 μs, Max = 1.849 μs
+IQR = 0.251 μs, LowerFence = 0.881 μs, UpperFence = 1.884 μs
+ConfidenceInterval = [0.510 μs; 2.410 μs] (CI 99.9%), Margin = 0.950 μs (65.04% of Mean)
+Skewness = 0.54, Kurtosis = 1.46, MValue = 2
+-------------------- Histogram --------------------
+[1.185 μs ; 1.660 μs) | @@@@
+[1.660 μs ; 2.039 μs) | @
+---------------------------------------------------
+
+RealSourceBenchmarks.VirtualCsv_StatsSum: Job-JZITSV(IterationCount=5, WarmupCount=2)
+Runtime = .NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 61.230 ms, StdErr = 2.391 ms (3.90%), N = 5, StdDev = 5.346 ms
+Min = 55.115 ms, Q1 = 58.454 ms, Median = 59.045 ms, Q3 = 65.516 ms, Max = 68.019 ms
+IQR = 7.062 ms, LowerFence = 47.861 ms, UpperFence = 76.108 ms
+ConfidenceInterval = [40.643 ms; 81.816 ms] (CI 99.9%), Margin = 20.587 ms (33.62% of Mean)
+Skewness = 0.17, Kurtosis = 0.97, MValue = 2
+-------------------- Histogram --------------------
+[52.976 ms ; 62.664 ms) | @@@
+[62.664 ms ; 72.122 ms) | @@
+---------------------------------------------------
+
+RealSourceBenchmarks.MaterializedReadCsv_FilterScan: Job-JZITSV(IterationCount=5, WarmupCount=2)
+Runtime = .NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 3.002 ms, StdErr = 0.076 ms (2.53%), N = 4, StdDev = 0.152 ms
+Min = 2.910 ms, Q1 = 2.918 ms, Median = 2.935 ms, Q3 = 3.018 ms, Max = 3.228 ms
+IQR = 0.100 ms, LowerFence = 2.768 ms, UpperFence = 3.169 ms
+ConfidenceInterval = [2.022 ms; 3.982 ms] (CI 99.9%), Margin = 0.980 ms (32.65% of Mean)
+Skewness = 0.72, Kurtosis = 1.29, MValue = 2
+-------------------- Histogram --------------------
+[2.785 ms ; 3.055 ms) | @@@
+[3.055 ms ; 3.354 ms) | @
+---------------------------------------------------
+
+RealSourceBenchmarks.MaterializedReadCsv_StatsSum: Job-JZITSV(IterationCount=5, WarmupCount=2)
+Runtime = .NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 44.444 ms, StdErr = 1.901 ms (4.28%), N = 5, StdDev = 4.251 ms
+Min = 40.704 ms, Q1 = 40.763 ms, Median = 42.928 ms, Q3 = 47.796 ms, Max = 50.029 ms
+IQR = 7.033 ms, LowerFence = 30.213 ms, UpperFence = 58.346 ms
+ConfidenceInterval = [28.077 ms; 60.811 ms] (CI 99.9%), Margin = 16.367 ms (36.83% of Mean)
+Skewness = 0.28, Kurtosis = 0.91, MValue = 2
+-------------------- Histogram --------------------
+[38.554 ms ; 45.079 ms) | @@@
+[45.079 ms ; 52.175 ms) | @@
+---------------------------------------------------
+
+// * Summary *
+
+BenchmarkDotNet v0.13.12, Windows 10 (10.0.19045.7548/22H2/2022Update)
+Intel Core i7-8550U CPU 1.80GHz (Kaby Lake R), 1 CPU, 8 logical and 4 physical cores
+.NET SDK 10.0.111
+  [Host]     : .NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2 DEBUG
+  Job-JZITSV : .NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2
+
+IterationCount=5  WarmupCount=2  
+
+| Method                         | Mean          | Error          | StdDev        | Ratio     | RatioSD  | Gen0       | Allocated  | Alloc Ratio |
+|------------------------------- |--------------:|---------------:|--------------:|----------:|---------:|-----------:|-----------:|------------:|
+| VirtualCsv_FilterRowsBy_Step   |      4.083 μs |      3.4361 μs |     0.8924 μs |      1.00 |     0.00 |     0.5951 |     2512 B |        1.00 |
+| VirtualCsv_Slice1000           |      1.460 μs |      0.9495 μs |     0.2466 μs |      0.37 |     0.11 |     0.2899 |     1216 B |        0.48 |
+| VirtualCsv_StatsSum            | 61,229.580 μs | 20,586.8240 μs | 5,346.3328 μs | 15,470.54 | 2,866.64 | 13222.2222 | 55520759 B |   22,102.21 |
+| MaterializedReadCsv_FilterScan |  3,001.915 μs |    980.0995 μs |   151.6715 μs |    718.88 |   157.87 |          - |       88 B |        0.04 |
+| MaterializedReadCsv_StatsSum   | 44,444.124 μs | 16,367.1814 μs | 4,250.5050 μs | 11,366.27 | 2,952.87 |  5727.2727 | 26400774 B |   10,509.86 |
+
+// * Hints *
+Outliers
+  RealSourceBenchmarks.MaterializedReadCsv_FilterScan: IterationCount=5, WarmupCount=2 -> 1 outlier  was  removed (4.39 ms)
+
+// * Legends *
+  Mean        : Arithmetic mean of all measurements
+  Error       : Half of 99.9% confidence interval
+  StdDev      : Standard deviation of all measurements
+  Ratio       : Mean of the ratio distribution ([Current]/[Baseline])
+  RatioSD     : Standard deviation of the ratio distribution ([Current]/[Baseline])
+  Gen0        : GC Generation 0 collects per 1000 operations
+  Allocated   : Allocated memory per single operation (managed only, inclusive, 1KB = 1024B)
+  Alloc Ratio : Allocated memory ratio distribution ([Current]/[Baseline])
+  1 μs        : 1 Microsecond (0.000001 sec)
+
+// * Diagnostic Output - MemoryDiagnoser *
+
+
+// ***** BenchmarkRunner: End *****
+Run time: 00:01:10 (70.53 sec), executed benchmarks: 5
+
+Global total time: 00:02:05 (125.64 sec), executed benchmarks: 5
+// * Artifacts cleanup *
+Artifacts cleanup is finished

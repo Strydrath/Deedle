@@ -150,6 +150,8 @@ type LookupRangeMode<'T> =
   | LookupRangeStep of ('T -> int * int)
   /// Naive over-approximation: entire ordinal domain (wrong for sparse matches).
   | LookupRangeFullFixed
+  /// Precomputed absolute indices (irregular/sparse matches — simulates an index).
+  | LookupRangeIndexList of ('T -> int64 list)
 
 /// Linear ordinal source over [0 .. length-1] with shared access counters.
 type InstrumentedOrdinalSource<'T>
@@ -209,6 +211,16 @@ type InstrumentedOrdinalSource<'T>
           RangeRestriction.Custom { Offset = offset; Step = step }
       | LookupRangeFullFixed ->
           RangeRestriction.Fixed(Address.ofInt64 0L, Address.ofInt64(length - 1L))
+      | LookupRangeIndexList f ->
+          let addrs = f v |> List.map Address.ofInt64
+          let count = int64 addrs.Length
+          ({ new IRangeRestriction<Address> with
+              member x.Count = count
+             interface seq<Address> with
+               member x.GetEnumerator() = (addrs :> seq<_>).GetEnumerator()
+             interface System.Collections.IEnumerable with
+               member x.GetEnumerator() = (addrs :> seq<_>).GetEnumerator() :> System.Collections.IEnumerator }
+           |> RangeRestriction.Custom)
 
     member x.LookupValue(k, l, check) =
       counters.LookupValueCount <- counters.LookupValueCount + 1
@@ -250,6 +262,7 @@ type InstrumentedOrdinalSource<'T>
                 // step search offsets stay relative to the sub-source ordinal domain.
                 LookupRangeStep f
             | LookupRangeFullFixed -> LookupRangeFullFixed
+            | LookupRangeIndexList _ -> lookupRangeMode
           InstrumentedOrdinalSource<'T>(newLen, subValueAt, counters, ?asLong=asLong, lookupRange=subLookup, hasMissing=hasMissing) :> _
       | Choice2Of2(:? StepRange as lr) ->
           let subValueAt i = valueAt (int64 lr.Offset + int64 lr.Step * i)
@@ -320,27 +333,57 @@ module InstrumentedOrdinalSource =
     let vals = InstrumentedOrdinalSource<float>(length, float, c, hasMissing=false)
     c, Virtual.CreateSeries(idx, vals)
 
-  /// Ordered time frame; `lookupRange` controls search-column LookupRange quality (B4).
-  let createOrderedSearchFrameWith (length: int64) (lookupRange: LookupRangeMode<string>) =
-    let words = "lorem ipsum dolor sit amet consectetur adipiscing elit".Split(' ')
+  /// Core factory: custom `valueAt` + LookupRange mode (B4 data profiles).
+  let createOrderedSearchFrameCore
+      (length: int64)
+      (valueAt: int64 -> string)
+      (lookupRange: LookupRangeMode<string>) =
     let c = AccessCounters()
     let start = DateTimeOffset(DateTime(2000, 1, 1), TimeSpan.FromHours(-1.0))
     let idx =
       InstrumentedOrdinalSource<DateTimeOffset>
         (length, (fun i -> start.AddTicks(i * 123456789L)), c, asLong=(fun dto -> dto.UtcTicks), hasMissing=false)
     let s1 = InstrumentedOrdinalSource<int64>(length, id, c, asLong=id, hasMissing=false)
-    let search v =
-      let o = words |> Array.findIndex ((=) v)
-      o, words.Length
-    let s2Lookup =
-      match lookupRange with
-      | LookupRangeStep _ -> LookupRangeStep search
-      | other -> other
-    let s2 =
-      InstrumentedOrdinalSource<string>
-        (length, (fun i -> words.[int (i % int64 words.Length)]), c, lookupRange=s2Lookup, hasMissing=false)
+    let s2 = InstrumentedOrdinalSource<string>(length, valueAt, c, lookupRange=lookupRange, hasMissing=false)
     let frame = Virtual.CreateFrame(idx, ["S1"; "S2"], [s1 :> IVirtualVectorSource; s2 :> IVirtualVectorSource])
+    c, frame
+
+  /// Ordered time frame; `lookupRange` controls search-column LookupRange quality (B4).
+  /// Default data: 11-word repeating cycle (ideal Step case).
+  let createOrderedSearchFrameWith (length: int64) (lookupRange: LookupRangeMode<string>) =
+    let words = "lorem ipsum dolor sit amet consectetur adipiscing elit".Split(' ')
+    let valueAt i = words.[int (i % int64 words.Length)]
+    let lookup =
+      match lookupRange with
+      | LookupRangeStep _ -> LookupRangeStep (fun v -> words |> Array.findIndex ((=) v), words.Length)
+      | other -> other
+    let c, frame = createOrderedSearchFrameCore length valueAt lookup
     c, frame, words
+
+  /// Large periodic vocabulary (e.g. 256 labels) — tests Step with bigger stride.
+  let createOrderedSearchFrameLargeVocab (length: int64) (vocabSize: int) =
+    let words = [| for i in 0 .. vocabSize - 1 -> sprintf "w%04d" i |]
+    let valueAt i = words.[int (i % int64 vocabSize)]
+    let lookup = LookupRangeStep (fun v -> words |> Array.findIndex ((=) v), vocabSize)
+    let c, frame = createOrderedSearchFrameCore length valueAt lookup
+    c, frame, words
+
+  /// Sparse matches at i ≡ remainder (mod modulus) — irregular; use IndexList or scan.
+  let createOrderedSearchFrameSparse (length: int64) (modulus: int64) (remainder: int64) =
+    let valueAt i = if i % modulus = remainder then "lorem" else sprintf "u%d" i
+    let indices = [ for i in 0L .. length - 1L do if i % modulus = remainder then i ]
+    let lookup = LookupRangeIndexList (function "lorem" -> indices | _ -> [])
+    let c, frame = createOrderedSearchFrameCore length valueAt lookup
+    c, frame, indices.Length
+
+  /// Same sparse data but wrong Step LookupRange (assumes period 11 like the default corpus).
+  let createOrderedSearchFrameSparseWrongStep (length: int64) (modulus: int64) (remainder: int64) =
+    let valueAt i = if i % modulus = remainder then "lorem" else sprintf "u%d" i
+    let trueCount =
+      [ for i in 0L .. length - 1L do if i % modulus = remainder then i ] |> List.length
+    let lookup = LookupRangeStep (fun _ -> int remainder, 11)
+    let c, frame = createOrderedSearchFrameCore length valueAt lookup
+    c, frame, trueCount
 
   /// Ordered time frame with a searchable string column (for filterRowsBy).
   let createOrderedSearchFrame (length: int64) =
