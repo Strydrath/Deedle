@@ -201,7 +201,7 @@ type TrackingSource<'T>
     member x.Invoke(op) = op.Invoke(x)
 
   // Implement generic source interface - mostly boilerplate or
-  // delegation to `Ranges` (except for LookupRange which we don't do)
+  // delegation to `Ranges` (`LookupRange` scans partitions via addressing)
 
   interface IVirtualVectorSource<'T> with
     member x.MergeWith(sources) =
@@ -210,7 +210,7 @@ type TrackingSource<'T>
         | _ -> failwith "MergeWith: other is not partitioned source!"))) :> _
 
     member x.LookupRange(v) =
-      failwith "LookupRange: not supported"
+      VirtualVectorSource.scanLookupRangeOf x v
 
     member x.LookupValue(value, lookup, check) =
       // This is good enough for testing, but it is not perfect
@@ -691,3 +691,11 @@ let ``Can use ColumnApply and 'abs' on a created frame`` () =
 
   f4.Rows.[date 510 0 .. date 511 4999] |> Stats.sum
   |> shouldEqual <| series ["Value" => 0.0; "Sin" => 0.0]
+
+[<Test>]
+let ``B10 Partitioned LookupRange scan filters a matching partition row`` () =
+  let df = createSmallFrame 3 (fun _ -> 24)
+  let filtered = df |> Frame.filterRowsBy "A" 2000005.0
+  filtered.RowIndex.AddressingScheme :? VirtualAddressingScheme |> shouldEqual true
+  filtered.RowCount |> shouldEqual 1
+  filtered.GetColumn<float>("A").GetAt(0) |> shouldEqual 2000005.0

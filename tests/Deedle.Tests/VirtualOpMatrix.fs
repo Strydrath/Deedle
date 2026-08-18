@@ -207,19 +207,13 @@ let ``B3 Ordinal filterRowsBy does not use virtual Search path`` () =
   c.Snapshot().LookupRangeCount |> shouldEqual 0
 
 [<Test>]
-let ``B3 FillMissing under virtual scheme is incomplete or materializes`` () =
+let ``B3 FillMissing under virtual scheme stays virtual`` () =
   let c = AccessCounters()
   let src = InstrumentedOrdinalSource<float>(1_000L, float, c, hasMissing=true)
   let s = Virtual.CreateOrdinalSeries(src)
-  try
-    let filled = s |> Series.fillMissing Direction.Forward
-    // If it succeeds, it should not claim to stay fully virtual without scanning.
-    match SeriesProbe.classify filled with
-    | FullyVirtual ->
-        c.Snapshot().ValueAtCount |> should be (greaterThan 0)
-    | FullyLinear | Mixed _ ->
-        c.Snapshot().ValueAtCount |> should be (greaterThan 0)
-  with
-  | _ ->
-      // Documented incomplete path (failwith under virtual scheme)
-      Assert.Pass("FillMissing failed as incomplete under virtual scheme")
+  c.Reset()
+  let filled = s |> Series.fillMissing Direction.Forward
+  SeriesProbe.isVirtual filled |> shouldEqual true
+  // Address 3 is missing (every 3rd); forward-fill copies the previous present value.
+  filled.TryGet(3L) |> shouldEqual (OptionalValue 2.0)
+  c.Snapshot().ValueAtCount |> should be (greaterThan 0)
