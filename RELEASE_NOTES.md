@@ -10,6 +10,10 @@
 - **`VirtualLookupRange` helpers**: `forRepeatingCycle`, `forCategorical`, `forCategoricalScan`, and `scan` for configuring searchable string columns on virtual sources.
 - **CSV virtual backend** (`Deedle.Virtual.Sources`): `CsvLineIndex`, `CsvVirtualSource`, and `CsvTestData` helpers for file-backed Big Deedle experiments.
 
+### Bug fixes
+
+- **Virtual wrappers (B10):** boxed / combined / mapped / row-reader sources no longer `failwith` on `LookupRange` / `LookupValue` — they delegate or scan. Partitioned `Ranges` sources accept custom LookupRange results. `Series.fillMissing` / `fillMissingWith` stay virtual. `VirtualVectorBuilder.AsyncBuild` with a virtual scheme raises `NotSupportedException` (use `Series.Materialize` / `AsyncMaterialize`).
+
 ### Tests
 
 - Added tests for `Frame.renameCol` and `Frame.renameColsUsing`.
