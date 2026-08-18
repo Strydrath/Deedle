@@ -147,14 +147,62 @@ and VirtualIndexBuilder() =
     member x.Recreate(index) = baseBuilder.Recreate(index)
 
     member x.GroupBy(index, keySel, vector) = baseBuilder.GroupBy(index, keySel, vector)
-    member x.Shift(sc, offset) = baseBuilder.Shift(sc, offset)
+
+    member x.Shift((index:IIndex<'K>, vector), offset) =
+      if not (index.AddressingScheme :? VirtualAddressingScheme) then
+        baseBuilder.Shift((index, vector), offset)
+      elif offset = 0 then index, vector
+      else
+        let n = index.KeyCount
+        let absOff = int64 (abs offset)
+        if n = 0L || absOff >= n then
+          baseBuilder.Shift((index, vector), offset)
+        else
+          // Keys and values are sliced from different ends so that result[k] = series[k - offset].
+          // GetSubVector on ordinal/CSV sources remaps both slices to 0 .. newLen-1, so they align.
+          let addrOps = index.AddressOperations
+          let newLen = n - absOff
+          let keyStart = if offset > 0 then absOff else 0L
+          let valStart = if offset > 0 then 0L else absOff
+          let indexRange =
+            RangeRestriction.Fixed(addrOps.AddressOf keyStart, addrOps.AddressOf (keyStart + newLen - 1L))
+          let vectorRange =
+            RangeRestriction.Fixed(addrOps.AddressOf valStart, addrOps.AddressOf (valStart + newLen - 1L))
+          let newIndex, _ = (x :> IIndexBuilder).GetAddressRange((index, vector), indexRange)
+          newIndex, Vectors.GetRange(vector, vectorRange)
+
     member x.Union(sc1, sc2) = baseBuilder.Union(sc1, sc2)
     member x.Intersect(sc1, sc2) = baseBuilder.Intersect(sc1, sc2)
     member x.LookupLevel(sc, key) = baseBuilder.LookupLevel(sc, key)
     member x.DropItem((index:IIndex<_>, vector), key) =
       baseBuilder.DropItem((index, vector), key)
+
     member x.Aggregate(index, aggregation, vector, selector) =
-      baseBuilder.Aggregate(index, aggregation, vector, selector)
+      match aggregation with
+      | WindowSize _
+      | ChunkSize _ when (index.AddressingScheme :? VirtualAddressingScheme) ->
+          let addrOps = index.AddressOperations
+          let locations =
+            match aggregation with
+            | ChunkSize(sz, bnd) -> Seq.chunkRangesWithBounds (int64 sz) bnd index.KeyCount
+            | WindowSize(sz, bnd) -> Seq.windowRangesWithBounds (int64 sz) bnd index.KeyCount
+            | _ -> Seq.empty
+          let vectorConstructions =
+            locations |> Seq.map (fun (kind, lo, hi) ->
+              if hi < lo then
+                kind, (Linear.LinearIndexBuilder.Instance.Create(Seq.empty, None), Vectors.Empty(0L))
+              else
+                let range = RangeRestriction.Fixed(addrOps.AddressOf lo, addrOps.AddressOf hi)
+                let idx, cmd = (x :> IIndexBuilder).GetAddressRange((index, vector), range)
+                kind, (idx, cmd))
+          let keyValuePairs = vectorConstructions |> Seq.map selector |> Array.ofSeq
+          let newIndex =
+            Linear.LinearIndexBuilder.Instance.Create(
+              ReadOnlyCollection.ofArray (Array.map fst keyValuePairs), None)
+          let vect = VectorBuilder.Instance.CreateMissing(Array.map snd keyValuePairs)
+          newIndex, vect
+      | _ ->
+          baseBuilder.Aggregate(index, aggregation, vector, selector)
     member x.Resample(chunkBuilder, index, keys, close, vect, selector) =
       baseBuilder.Resample(chunkBuilder, index, keys, close, vect, selector)
 

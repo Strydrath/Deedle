@@ -7,6 +7,9 @@
 - **`Virtual.ReadCsv`**: load a CSV file as a virtual `Frame` with an ordered index column (auto-detects `Timestamp` / `DateTime` when present). Empty / `NA`-style cells become missing values; quoted fields with commas are supported.
 - **`VirtualLookupRange` helpers**: `forRepeatingCycle`, `forCategorical`, `forCategoricalScan`, and `scan` for configuring searchable string columns on virtual sources. Unknown cycle values yield an empty filter range (no throw).
 - **CSV virtual backend** (`Deedle.Virtual.Sources`): `CsvLineIndex`, `CsvVirtualSource`, and `CsvTestData` helpers for file-backed Big Deedle experiments.
+- **`Frame.filterRowsBy2`**: intersect two column predicates in one virtual `LookupRange` / `GetSubVector` pass (falls back to sequential `filterRowsBy` on linear frames).
+- **Virtual `Series.shift` / `Series.diff` / `Series.pctChange`**: stay on the virtual addressing scheme (no full materialize). `Frame.shift` / `Frame.diff` / `Frame.pctChange` use the frame's vector builder so virtual columns stay virtual.
+- **Virtual fixed windows**: `Series.windowSize` / `chunkSize` build nested window series via `GetAddressRange` (virtual slices). Aggregating those windows still materializes the result series of scalars.
 
 ### Bug fixes
 
