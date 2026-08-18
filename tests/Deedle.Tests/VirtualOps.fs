@@ -154,3 +154,29 @@ let ``B9 Projection pushdown does not ValueAt unused columns at filter time`` ()
   cUnused.Snapshot().ValueAtCount |> should be (greaterThan 0)
   // Reading U must not decode the search column.
   cSearch.Snapshot().ValueAtCount |> shouldEqual 0
+
+[<Test>]
+let ``B9 Inner zip of overlapping ordinal slices stays virtual`` () =
+  let _, s = InstrumentedOrdinalSource.createOrdinalSeries 1_000L
+  let a = s.[0L .. 500L]
+  let b = s.[250L .. 750L]
+  let zipped = Series.zipAlign JoinKind.Inner Lookup.Exact a b
+  SeriesProbe.isVirtual zipped |> shouldEqual true
+  zipped.KeyCount |> shouldEqual 251
+  zipped.GetAt(0) |> shouldEqual (OptionalValue 250L, OptionalValue 250L)
+
+[<Test>]
+let ``B9 Outer join of mismatched ordinal lengths materializes`` () =
+  let _, s1 = InstrumentedOrdinalSource.createFloats 64L
+  let _, s2 = InstrumentedOrdinalSource.createFloats 32L
+  let f1 = Virtual.CreateOrdinalFrame(["A"], [s1 :> IVirtualVectorSource])
+  let f2 = Virtual.CreateOrdinalFrame(["B"], [s2 :> IVirtualVectorSource])
+  let joined = f1.Join(f2, JoinKind.Outer)
+  FrameProbe.rowIndexIsVirtual joined |> shouldEqual false
+
+[<Test>]
+let ``B9 GroupBy nested series are linear after a full pull`` () =
+  let c, s = InstrumentedOrdinalSource.createFloatSeries 64L
+  let grouped = s |> Series.groupBy (fun _k v -> int v % 4)
+  SeriesProbe.isLinear (grouped.GetAt(0)) |> shouldEqual true
+  c.Snapshot().ValueAtCount |> should be (greaterThan 0)

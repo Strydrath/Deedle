@@ -1384,6 +1384,9 @@ module Series =
   /// Groups a series (ordered or unordered) using the specified key selector (`keySelector`)
   /// and then returns a series of (nested) series as the result. The outer series is indexed by
   /// the newly produced keys, the nested series are indexed with the original keys.
+  /// On a virtual series this always materializes: grouping must visit every value, and
+  /// each nested series is built with a linear index. Call <c>Series.Materialize</c> first
+  /// if you want that pull to be explicit.
   /// </summary>
   /// <param name="keySelector">Generates a new key that is used for aggregation, based on the original key and value. The new key must support equality testing.</param>
   /// <param name="series">An input series to be grouped.</param>
@@ -1409,6 +1412,8 @@ module Series =
   /// <summary>
   /// Drop missing values from the specified series. The returned series contains
   /// only those keys for which there is a value available in the original one.
+  /// On a virtual series this scans once for present addresses, then keeps a
+  /// virtual sub-vector (it does not copy values into a linear array).
   /// </summary>
   /// <param name="series">An input series to be filtered</param>
   /// <example>
@@ -1421,7 +1426,21 @@ module Series =
   /// <category>Missing values</category>
   [<CompiledName("DropMissing")>]
   let dropMissing (series:Series<'K, 'T>) =
-    series.WhereOptional(fun (KeyValue(k, v)) -> v.HasValue)
+    match series.Index.AddressingScheme with
+    | :? Deedle.Vectors.Virtual.VirtualAddressingScheme ->
+        let present = ResizeArray<_>()
+        for addr in series.Index.AddressOperations.Range do
+          if series.Vector.GetValue(addr).HasValue then present.Add(addr)
+        if int64 present.Count = series.Index.KeyCount then series
+        elif present.Count = 0 then
+          series.WhereOptional(fun (KeyValue(_, v)) -> v.HasValue)
+        else
+          let mapping = RangeRestriction.ofSeq (int64 present.Count) present
+          let newIndex, cmd = series.IndexBuilder.GetAddressRange((series.Index, Vectors.Return 0), mapping)
+          let newVector = series.VectorBuilder.Build(newIndex.AddressingScheme, cmd, [| series.Vector |])
+          Series(newIndex, newVector, series.VectorBuilder, series.IndexBuilder)
+    | _ ->
+        series.WhereOptional(fun (KeyValue(_, v)) -> v.HasValue)
 
   /// <summary>
   /// Fill missing values in the series using the specified function.
@@ -1559,6 +1578,9 @@ module Series =
   /// <summary>
   /// Returns a new series, containing the observations of the original series sorted by
   /// values returned by the specified projection function.
+  /// Sorting by value reads the whole series and materializes a linear result, including
+  /// on virtual series. To keep a virtual series, use <c>Series.sortByKey</c> when the
+  /// index is already ordered (a no-op).
   /// </summary>
   /// <param name="series">An input series whose values are sorter</param>
   /// <param name="proj">A projection function that returns a value to be compared for each value contained in the original input series.</param>
@@ -2035,6 +2057,9 @@ module Series =
 
   /// <summary>
   /// Returns a new series which is intersection of two series by (key, value) pair.
+  /// This compares values at shared keys and always materializes the result, even when
+  /// both inputs are virtual. Key-only inner join/zip of identical ordinal virtual
+  /// indices stays virtual (see <c>Series.zipAlign</c> / <c>Frame.join</c>).
   /// </summary>
   /// <category>Joining, merging and zipping</category>
   [<CompiledName("Intersect")>]

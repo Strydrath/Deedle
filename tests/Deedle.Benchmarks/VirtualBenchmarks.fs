@@ -4,6 +4,7 @@ open System
 open BenchmarkDotNet.Attributes
 open Deedle
 open Deedle.Virtual
+open Deedle.Vectors.Virtual
 open Deedle.Tests.VirtualInstrumentation
 
 /// BenchmarkDotNet suite for Big Deedle synthetic virtual workloads (B5).
@@ -25,6 +26,9 @@ type VirtualBenchmarks() =
     let mutable sparseWrongStepFrame : Frame<DateTimeOffset, string> = Unchecked.defaultof<_>
     let mutable series : Series<int64, int64> = Unchecked.defaultof<_>
     let mutable floatSeries : Series<int64, float> = Unchecked.defaultof<_>
+    let mutable missingSeries : Series<int64, float> = Unchecked.defaultof<_>
+    let mutable joinLeft : Frame<int64, string> = Unchecked.defaultof<_>
+    let mutable joinRight : Frame<int64, string> = Unchecked.defaultof<_>
     let mutable searchValue = "lorem"
 
     [<GlobalSetup>]
@@ -62,6 +66,15 @@ type VirtualBenchmarks() =
         series <- s
         let _, fs = InstrumentedOrdinalSource.createFloatSeries n
         floatSeries <- fs
+
+        let cMiss = AccessCounters()
+        let missSrc = InstrumentedOrdinalSource<float>(n, float, cMiss, hasMissing=true)
+        missingSeries <- Virtual.CreateOrdinalSeries(missSrc)
+
+        let _, leftCol = InstrumentedOrdinalSource.createFloats n
+        let _, rightCol = InstrumentedOrdinalSource.createFloats n
+        joinLeft <- Virtual.CreateOrdinalFrame(["A"], [leftCol :> IVirtualVectorSource])
+        joinRight <- Virtual.CreateOrdinalFrame(["B"], [rightCol :> IVirtualVectorSource])
 
     // --- Filter (B4 profiles) -----------------------------------------------------------------
 
@@ -160,3 +173,19 @@ type VirtualBenchmarks() =
     [<Benchmark>]
     member _.SliceThenStatsSum_1000() =
         Stats.sum floatSeries.[0L .. 999L] |> ignore
+
+    [<Benchmark>]
+    member _.ZipAlign_IdenticalOrdinal() =
+        Series.zipAlign JoinKind.Inner Lookup.Exact series floatSeries |> ignore
+
+    [<Benchmark>]
+    member _.SortByKey_AlreadyOrdered() =
+        floatSeries |> Series.sortByKey |> ignore
+
+    [<Benchmark>]
+    member _.DropMissing_VirtualSeries() =
+        missingSeries |> Series.dropMissing |> ignore
+
+    [<Benchmark>]
+    member _.Join_IdenticalOrdinalFrames() =
+        joinLeft.Join(joinRight, JoinKind.Outer) |> ignore
