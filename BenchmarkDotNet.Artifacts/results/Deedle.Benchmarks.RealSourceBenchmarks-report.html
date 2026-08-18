@@ -2,7 +2,7 @@
 <html lang='en'>
 <head>
 <meta charset='utf-8' />
-<title>Deedle.Benchmarks.RealSourceBenchmarks-20260817-131336</title>
+<title>Deedle.Benchmarks.RealSourceBenchmarks-20260818-112159</title>
 
 <style type="text/css">
 	table { border-collapse: collapse; display: block; width: 100%; overflow: auto; }
@@ -13,23 +13,23 @@
 </head>
 <body>
 <pre><code>
-BenchmarkDotNet v0.13.12, Windows 10 (10.0.19045.7548/22H2/2022Update)
+BenchmarkDotNet v0.13.12, Windows 10 (10.0.19045.7663/22H2/2022Update)
 Intel Core i7-8550U CPU 1.80GHz (Kaby Lake R), 1 CPU, 8 logical and 4 physical cores
 .NET SDK 10.0.111
   [Host]     : .NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2 DEBUG
-  Job-RXPTLX : .NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2
+  Job-MPKMJS : .NET 10.0.11 (10.0.1126.37416), X64 RyuJIT AVX2
 </code></pre>
 <pre><code>IterationCount=5  WarmupCount=2  
 </code></pre>
 
 <table>
-<thead><tr><th>Method                  </th><th>Mean   </th><th>Error   </th><th>StdDev </th><th>Ratio</th><th>RatioSD</th><th>Gen0</th><th>Gen1</th><th>Gen2</th><th>Allocated</th><th>Alloc Ratio</th>
+<thead><tr><th>Method                  </th><th>Mean   </th><th>Error  </th><th>StdDev</th><th>Ratio</th><th>RatioSD</th><th>Gen0</th><th>Gen1</th><th>Gen2</th><th>Allocated</th><th>Alloc Ratio</th>
 </tr>
-</thead><tbody><tr><td>VirtualCsv_FilterRowsBy_Step</td><td>3.368 &mu;s</td><td>0.7552 &mu;s</td><td>0.1169 &mu;s</td><td>1.00</td><td>0.00</td><td>0.5951</td><td>-</td><td>-</td><td>2512 B</td><td>1.00</td>
-</tr><tr><td>VirtualCsv_Slice1000</td><td>1.571 &mu;s</td><td>1.1037 &mu;s</td><td>0.2866 &mu;s</td><td>0.49</td><td>0.08</td><td>0.2899</td><td>-</td><td>-</td><td>1216 B</td><td>0.48</td>
-</tr><tr><td>VirtualCsv_StatsSum</td><td>61,155.265 &mu;s</td><td>10,566.0928 &mu;s</td><td>2,743.9807 &mu;s</td><td>17,934.42</td><td>1,223.38</td><td>13000.0000</td><td>-</td><td>-</td><td>54800760 B</td><td>21,815.59</td>
-</tr><tr><td>MaterializedReadCsv_FilterScan</td><td>5,796.345 &mu;s</td><td>2,676.2818 &mu;s</td><td>695.0219 &mu;s</td><td>1,758.34</td><td>179.09</td><td>-</td><td>-</td><td>-</td><td>89 B</td><td>0.04</td>
-</tr><tr><td>MaterializedReadCsv_StatsSum</td><td>37,095.602 &mu;s</td><td>11,793.4372 &mu;s</td><td>1,825.0475 &mu;s</td><td>11,022.82</td><td>597.37</td><td>5800.0000</td><td>66.6667</td><td>66.6667</td><td>26400796 B</td><td>10,509.87</td>
+</thead><tbody><tr><td>VirtualCsv_FilterRowsBy_Step</td><td>3.745 &mu;s</td><td>0.2946 &mu;s</td><td>0.0765 &mu;s</td><td>1.00</td><td>0.00</td><td>0.7935</td><td>-</td><td>-</td><td>3345 B</td><td>1.00</td>
+</tr><tr><td>VirtualCsv_Slice1000</td><td>1.407 &mu;s</td><td>0.1937 &mu;s</td><td>0.0503 &mu;s</td><td>0.38</td><td>0.02</td><td>0.4120</td><td>-</td><td>-</td><td>1728 B</td><td>0.52</td>
+</tr><tr><td>VirtualCsv_StatsSum</td><td>49,921.161 &mu;s</td><td>3,369.9498 &mu;s</td><td>521.5035 &mu;s</td><td>13,395.74</td><td>343.18</td><td>13090.9091</td><td>-</td><td>-</td><td>54800762 B</td><td>16,382.89</td>
+</tr><tr><td>MaterializedReadCsv_FilterScan</td><td>4,376.527 &mu;s</td><td>854.3347 &mu;s</td><td>221.8680 &mu;s</td><td>1,167.97</td><td>37.42</td><td>-</td><td>-</td><td>-</td><td>88 B</td><td>0.03</td>
+</tr><tr><td>MaterializedReadCsv_StatsSum</td><td>25,040.222 &mu;s</td><td>1,195.8305 &mu;s</td><td>310.5534 &mu;s</td><td>6,687.97</td><td>164.05</td><td>5781.2500</td><td>62.5000</td><td>62.5000</td><td>26400792 B</td><td>7,892.61</td>
 </tr></tbody></table>
 </body>
 </html>

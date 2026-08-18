@@ -68,8 +68,12 @@ type IndexUtils =
 open Deedle
 open Deedle.Ranges
 open Deedle.Internal
+open Deedle.Addressing
 open Deedle.Vectors.Virtual
 open Deedle.Indices.Virtual
+open System
+
+module Address = LinearAddress
 
 /// <exclude />
 ///
@@ -77,6 +81,20 @@ open Deedle.Indices.Virtual
 type VirtualVectorHelper =
   static member Create<'T>(source:IVirtualVectorSource<'T>) =
     VirtualVector<'T>(source)
+
+/// Options for [`Virtual.ReadCsv`].
+type VirtualReadCsvOptions =
+  { /// Column used as ordered row index. When `None`, auto-detects `Timestamp` / `DateTime` / first parseable date column.
+    IndexColumn: string option
+    /// Optional searchable string column and its LookupRange mode.
+    SearchColumn: (string * LookupRangeMode<string>) option
+    /// Explicit column keys (defaults to all CSV columns except index column).
+    ColumnKeys: string list option }
+
+  static member Default =
+    { IndexColumn = None
+      SearchColumn = None
+      ColumnKeys = None }
 
 /// Provides static methods for creating virtual series and virtual frames.
 /// Those provide necessary wrapping around `IVirtualVectorSource` values
@@ -125,3 +143,69 @@ type Virtual private () =
   /// The value source does not need to implement lookup - mainly `ValueAt`, merging and getting sub-source
   static member CreateFrame(indexSource:IVirtualVectorSource<_>, keys, sources:seq<IVirtualVectorSource>) =
     createFrame (VirtualOrderedIndex indexSource) (Index.ofKeys (ReadOnlyCollection.ofSeq keys)) sources
+
+/// Ordinal pull-on-read virtual source with optional LookupRange semantics.
+type OrdinalVirtualSource<'T>
+    ( length: int64,
+      valueAt: int64 -> 'T,
+      schemeId: string,
+      ?asLong: 'T -> int64,
+      ?lookupRange: LookupRangeMode<'T> ) =
+
+  let lookupRangeMode = defaultArg lookupRange LookupRangeUnsupported
+  let addressing = Indices.Linear.LinearAddressOperations(0L, length - 1L) :> IAddressOperations
+  let context = sprintf "OrdinalVirtualSource<%s>" (typeof<'T>.Name)
+
+  let rec createFromSpec (spec: LookupRangeExecutor.SubVectorSpec<'T>) =
+    OrdinalVirtualSource<'T>(spec.Length, spec.ValueAt, schemeId, ?asLong=spec.AsLong, lookupRange=spec.LookupRange) :> IVirtualVectorSource<'T>
+
+  interface IVirtualVectorSource with
+    member this.Length = length
+    member this.AddressingSchemeID = schemeId
+    member this.ElementType = typeof<'T>
+    member this.AddressOperations = addressing
+    member this.Invoke(op) = op.Invoke(this :> IVirtualVectorSource<'T>)
+
+  interface IVirtualVectorSource<'T> with
+    member _.MergeWith(sources) =
+      let parts =
+        (length, valueAt)
+        :: [ for s in sources ->
+               match s with
+               | :? OrdinalVirtualSource<'T> as src -> src.Length, src.RawValueAt
+               | _ -> failwith "MergeWith: expected OrdinalVirtualSource" ]
+      let total = parts |> List.sumBy fst
+      let mergedValueAt (i: int64) =
+        let mutable offset = 0L
+        let mutable result = None
+        for (len, vat) in parts do
+          if result.IsNone then
+            if i < offset + len then result <- Some(vat (i - offset))
+            else offset <- offset + len
+        match result with
+        | Some v -> v
+        | None -> failwithf "MergeWith: index %d out of range (len=%d)" i total
+      OrdinalVirtualSource<'T>(total, mergedValueAt, schemeId, ?asLong=asLong, lookupRange=lookupRangeMode) :> _
+
+    member _.LookupRange(v) =
+      LookupRangeExecutor.lookupRange length lookupRangeMode v context
+
+    member _.LookupValue(k, l, check) =
+      let asLongFn =
+        match asLong with
+        | Some g -> g
+        | None -> failwith "LookupValue: asLong not configured"
+      let c = Func<int64, bool>(fun i -> check.Invoke(Address.ofInt64 i))
+      IndexUtilsModule.binarySearch length (Func<_, _>(fun i -> asLongFn (valueAt i))) (asLongFn k) l c
+      |> OptionalValue.map (fun i -> valueAt i, Address.ofInt64 i)
+
+    member _.ValueAt(loc) =
+      OptionalValue(valueAt (Address.asInt64 loc.Address))
+
+    member _.GetSubVector(range) =
+      match LookupRangeExecutor.getSubVector length valueAt lookupRangeMode asLong range with
+      | Choice1Of2 spec -> createFromSpec spec
+      | Choice2Of2 _ -> invalidOp "GetSubVector: unexpected result"
+
+  member _.Length = length
+  member _.RawValueAt(i: int64) = valueAt i
