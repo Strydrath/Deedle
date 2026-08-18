@@ -100,6 +100,15 @@ and VirtualOrdinalIndex(ranges:Ranges<int64>, source:IVirtualVectorSource) =
   /// Returns the source that is used to identify the index.
   member x.Source = source
 
+  /// Structural equality on the key intervals (not source identity). Two ordinal
+  /// virtual frames of the same length compare equal, which lets Join/Zip skip Union.
+  override x.Equals(another) =
+    match another with
+    | :? VirtualOrdinalIndex as other -> ranges.Ranges = other.Ranges.Ranges
+    | _ -> false
+
+  override x.GetHashCode() = hash ranges.Ranges
+
   interface IIndex<int64> with
     member x.AddressingScheme = VirtualAddressingScheme(source.AddressingSchemeID) :> _
     member x.AddressOperations = source.AddressOperations
@@ -171,8 +180,44 @@ and VirtualIndexBuilder() =
           let newIndex, _ = (x :> IIndexBuilder).GetAddressRange((index, vector), indexRange)
           newIndex, Vectors.GetRange(vector, vectorRange)
 
-    member x.Union(sc1, sc2) = baseBuilder.Union(sc1, sc2)
-    member x.Intersect(sc1, sc2) = baseBuilder.Intersect(sc1, sc2)
+    member x.Union((index1:IIndex<'K>, vector1), (index2, vector2)) =
+      match index1, index2 with
+      | (:? VirtualOrdinalIndex as a), (:? VirtualOrdinalIndex as b)
+          when a.Ranges.Ranges = b.Ranges.Ranges ->
+          index1, vector1, vector2
+      | (:? VirtualOrderedIndex<'K> as a), (:? VirtualOrderedIndex<'K> as b)
+          when Object.ReferenceEquals(a.Source, b.Source) && a.Source.Length = b.Source.Length ->
+          index1, vector1, vector2
+      | _ ->
+          baseBuilder.Union((index1, vector1), (index2, vector2))
+
+    member x.Intersect((index1:IIndex<'K>, vector1), (index2, vector2)) =
+      let singleBlock (r: Ranges<int64>) =
+        if r.Ranges.Length = 1 then Some r.Ranges.[0] else None
+      match index1, index2 with
+      | (:? VirtualOrdinalIndex as a), (:? VirtualOrdinalIndex as b)
+          when a.Ranges.Ranges = b.Ranges.Ranges ->
+          index1, vector1, vector2
+      | (:? VirtualOrdinalIndex as a), (:? VirtualOrdinalIndex as b) ->
+          match singleBlock a.Ranges, singleBlock b.Ranges with
+          | Some(lo1, hi1), Some(lo2, hi2) ->
+              let lo, hi = max lo1 lo2, min hi1 hi2
+              if lo > hi then
+                baseBuilder.Create(Seq.empty, Some true), Vectors.Empty(0L), Vectors.Empty(0L)
+              else
+                let kLo, kHi = unbox<'K> lo, unbox<'K> hi
+                let idx1, cmd1 =
+                  (x :> IIndexBuilder).GetRange((index1, vector1), (Some(kLo, BoundaryBehavior.Inclusive), Some(kHi, BoundaryBehavior.Inclusive)))
+                let _, cmd2 =
+                  (x :> IIndexBuilder).GetRange((index2, vector2), (Some(kLo, BoundaryBehavior.Inclusive), Some(kHi, BoundaryBehavior.Inclusive)))
+                idx1, cmd1, cmd2
+          | _ ->
+              baseBuilder.Intersect((index1, vector1), (index2, vector2))
+      | (:? VirtualOrderedIndex<'K> as a), (:? VirtualOrderedIndex<'K> as b)
+          when Object.ReferenceEquals(a.Source, b.Source) && a.Source.Length = b.Source.Length ->
+          index1, vector1, vector2
+      | _ ->
+          baseBuilder.Intersect((index1, vector1), (index2, vector2))
     member x.LookupLevel(sc, key) = baseBuilder.LookupLevel(sc, key)
     member x.DropItem((index:IIndex<_>, vector), key) =
       baseBuilder.DropItem((index, vector), key)
@@ -303,7 +348,7 @@ and VirtualIndexBuilder() =
     member x.Reindex(index1:IIndex<'K>, index2:IIndex<'K>, semantics, vector, cond) =
       match index1, index2 with
       | (:? VirtualOrdinalIndex as index1), (:? VirtualOrdinalIndex as index2)
-          when index1.Ranges = index2.Ranges -> vector
+          when index1.Ranges.Ranges = index2.Ranges.Ranges -> vector
       | _ -> baseBuilder.Reindex(index1, index2, semantics, vector, cond)
 
 

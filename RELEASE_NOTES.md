@@ -10,6 +10,8 @@
 - **`Frame.filterRowsBy2`**: intersect two column predicates in one virtual `LookupRange` / `GetSubVector` pass (falls back to sequential `filterRowsBy` on linear frames).
 - **Virtual `Series.shift` / `Series.diff` / `Series.pctChange`**: stay on the virtual addressing scheme (no full materialize). `Frame.shift` / `Frame.diff` / `Frame.pctChange` use the frame's vector builder so virtual columns stay virtual.
 - **Virtual fixed windows**: `Series.windowSize` / `chunkSize` build nested window series via `GetAddressRange` (virtual slices). Aggregating those windows still materializes the result series of scalars.
+- **Virtual ordinal Join / Zip** of identical key ranges (and inner zip of overlapping single-block ordinal slices) keep a virtual row index. Mismatched keys, `joinOn`, and nearest-key lookup still materialize.
+- **Virtual `Series.dropMissing`**: one presence scan, then a virtual sub-vector. `Series.sortByKey` is a no-op on already-ordered virtual series. `Series.sortBy` / `groupBy` / full-series Stats / `Series.intersect` (key+value) remain documented materialize.
 
 ### Bug fixes
 

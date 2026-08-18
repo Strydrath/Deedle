@@ -174,9 +174,11 @@ type InstrumentedOrdinalSource<'T>
       counters: AccessCounters,
       ?asLong: 'T -> int64,
       ?lookupRange: LookupRangeMode<'T>,
-      ?hasMissing: bool ) =
+      ?hasMissing: bool,
+      ?addrMap: int64 -> int64 ) =
 
   let hasMissing = defaultArg hasMissing false
+  let addrMap = defaultArg addrMap id
   let lookupRangeMode = defaultArg lookupRange LookupRangeUnsupported
   let addressing = Indices.Linear.LinearAddressOperations(0L, length - 1L) :> IAddressOperations
 
@@ -207,7 +209,7 @@ type InstrumentedOrdinalSource<'T>
             else valueAtMerged (i - len) rest
       let mergedValueAt i = valueAtMerged i parts
       InstrumentedOrdinalSource<'T>
-        (total, mergedValueAt, counters, ?asLong=asLong, lookupRange=lookupRangeMode, hasMissing=hasMissing) :> _
+        (total, mergedValueAt, counters, ?asLong=asLong, lookupRange=lookupRangeMode, hasMissing=hasMissing, addrMap=addrMap) :> _
 
     member x.LookupRange(v) =
       counters.LookupRangeCount <- counters.LookupRangeCount + 1
@@ -228,7 +230,7 @@ type InstrumentedOrdinalSource<'T>
     member x.ValueAt(loc) =
       let absAddr = Address.asInt64 loc.Address
       counters.RecordValueAt(absAddr)
-      if hasMissing && absAddr % 3L = 0L then OptionalValue.Missing
+      if hasMissing && addrMap absAddr % 3L = 0L then OptionalValue.Missing
       else OptionalValue(valueAt absAddr)
 
     member x.GetSubVector(range) =
@@ -237,7 +239,8 @@ type InstrumentedOrdinalSource<'T>
       | Choice1Of2 spec ->
           let subValueAt i = valueAt (spec.MapRow i)
           InstrumentedOrdinalSource<'T>
-            (spec.Length, subValueAt, counters, ?asLong=spec.AsLong, lookupRange=spec.LookupRange, hasMissing=hasMissing) :> _
+            (spec.Length, subValueAt, counters, ?asLong=spec.AsLong, lookupRange=spec.LookupRange,
+             hasMissing=hasMissing, addrMap=(fun i -> addrMap (spec.MapRow i))) :> _
       | Choice2Of2 _ -> invalidOp "GetSubVector: unexpected range restriction"
 
   /// Read without recording (for MergeWith composition).
