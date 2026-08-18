@@ -120,17 +120,36 @@ let ``B3 GroupBy materializes to linear storage`` () =
   c.Snapshot().ValueAtCount |> should be (greaterThan 0)
 
 [<Test>]
-let ``B3 Window materializes to linear storage`` () =
+let ``B3 WindowSize keeps nested window series virtual`` () =
+  let _, s = InstrumentedOrdinalSource.createFloatSeries 1_000L
+  let windows = s |> Series.windowSizeInto (5, Boundary.Skip) DataSegment.data
+  let first = windows.GetAt(0)
+  Op.assertVirtual first
+  first.KeyCount |> shouldEqual 5
+
+[<Test>]
+let ``B3 Window aggregate of sums materializes the result series`` () =
   let _, s = InstrumentedOrdinalSource.createFloatSeries 1_000L
   let windows = s |> Series.windowSizeInto (5, Boundary.AtEnding) (fun w -> Stats.sum w.Data)
   Op.assertLinear windows
 
 [<Test>]
-let ``B3 Shift materializes to linear storage`` () =
+let ``B3 Shift preserves virtual storage without ValueAt`` () =
   let c, s = InstrumentedOrdinalSource.createFloatSeries Op.nSmall
+  c.Reset()
   let shifted = s |> Series.shift 1
-  Op.assertLinear shifted
-  c.Snapshot().ValueAtCount |> should be (greaterThan 0)
+  SeriesProbe.isVirtual shifted |> shouldEqual true
+  c.Snapshot().ValueAtCount |> shouldEqual 0
+  shifted.KeyCount |> shouldEqual (int Op.nSmall - 1)
+  shifted.[1L] |> shouldEqual s.[0L]
+
+[<Test>]
+let ``B3 Slice then Stats.sum pulls only the slice`` () =
+  let c, s = InstrumentedOrdinalSource.createFloatSeries Op.nMed
+  let sliced = s.[100L .. 199L]
+  c.Reset()
+  Stats.sum sliced |> shouldEqual 14950.0
+  c.Snapshot().ValueAtCount |> shouldEqual 100
 
 [<Test>]
 let ``B3 DropMissing materializes to linear storage`` () =

@@ -4,6 +4,7 @@ open System
 open Deedle
 open Deedle.Addressing
 open Deedle.Vectors.Virtual
+open Deedle.VectorHelpers
 
 module Address = LinearAddress
 
@@ -154,3 +155,56 @@ module LookupRangeExecutor =
             MapRow = fun i -> addrs.[int i]
             AsLong = asLong
             LookupRange = mode }
+
+  let private gcd (a: int) (b: int) =
+    let rec loop x y = if y = 0 then abs x else loop y (x % y)
+    loop a b
+
+  let private emptyRange =
+    RangeRestriction.ofSeq 0L Array.empty
+
+  /// Intersect two LookupRange results (same original address domain).
+  /// Used to fuse two `filterRowsBy` predicates into one sub-vector restriction.
+  let intersect (a: RangeRestriction<Address>) (b: RangeRestriction<Address>) =
+    let fromAddrs addrs =
+      let arr = addrs |> Seq.distinct |> Array.ofSeq
+      RangeRestriction.ofSeq (int64 arr.Length) arr
+    let tryStep = function
+      | RangeRestriction.Custom(:? StepRange as s) -> Some s
+      | _ -> None
+    match tryStep a, tryStep b, a, b with
+    | Some s1, Some s2, _, _ ->
+        if s1.Step = 0 || s2.Step = 0 then emptyRange
+        else
+          let p, q, ao, bo = s1.Step, s2.Step, s1.Offset, s2.Offset
+          let g = gcd p q
+          if (ao - bo) % g <> 0 then emptyRange
+          else
+            let lcm = p / g * q
+            let m = max ao bo
+            let rem = ((m - ao) % p + p) % p
+            let startA = if rem = 0 then m else m + (p - rem)
+            let rec loop x =
+              if (x - bo) % q = 0 then x else loop (x + p)
+            RangeRestriction.Custom { Offset = loop startA; Step = lcm }
+    | _, _, RangeRestriction.Fixed(lo1, hi1), RangeRestriction.Fixed(lo2, hi2) ->
+        let lo = if lo1 > lo2 then lo1 else lo2
+        let hi = if hi1 < hi2 then hi1 else hi2
+        if lo <= hi then RangeRestriction.Fixed(lo, hi) else emptyRange
+    | Some s, None, _, RangeRestriction.Fixed(lo, hi)
+    | None, Some s, RangeRestriction.Fixed(lo, hi), _ ->
+        let lo64, hi64 = Address.asInt64 lo, Address.asInt64 hi
+        let rec collect i acc =
+          let addr = int64 s.Offset + int64 s.Step * i
+          if addr > hi64 then List.rev acc
+          elif addr < lo64 then collect (i + 1L) acc
+          else collect (i + 1L) (Address.ofInt64 addr :: acc)
+        fromAddrs (collect 0L [])
+    | _, _, RangeRestriction.Custom ar1, RangeRestriction.Custom ar2 ->
+        let set2 = System.Collections.Generic.HashSet<_>(ar2)
+        fromAddrs (ar1 |> Seq.filter set2.Contains)
+    | _, _, RangeRestriction.Custom ar, RangeRestriction.Fixed(lo, hi)
+    | _, _, RangeRestriction.Fixed(lo, hi), RangeRestriction.Custom ar ->
+        fromAddrs (ar |> Seq.filter (fun addr -> addr >= lo && addr <= hi))
+    | _ -> emptyRange
+

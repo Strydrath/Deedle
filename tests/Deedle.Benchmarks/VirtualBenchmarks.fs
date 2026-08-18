@@ -131,3 +131,32 @@ type VirtualBenchmarks() =
     [<Benchmark>]
     member _.StatsSum_VirtualSeries() =
         Stats.sum floatSeries |> ignore
+
+    [<Benchmark>]
+    member _.Shift_VirtualSeries() =
+        floatSeries |> Series.shift 1 |> ignore
+
+    [<Benchmark>]
+    member _.Diff_VirtualSeries() =
+        floatSeries |> Series.diff 1 |> ignore
+
+    [<Benchmark>]
+    member _.WindowSize_VirtualNested() =
+        floatSeries.[0L .. 199L]
+        |> Series.windowSizeInto (5, Boundary.Skip) DataSegment.data
+        |> ignore
+
+    [<Benchmark>]
+    member _.FilterRowsBy2_FusedSameColumn() =
+        orderedFrame |> Frame.filterRowsBy2 "S2" searchValue "S2" searchValue |> ignore
+
+    [<Benchmark>]
+    member _.FilterRowsBy_ChainedSameColumn() =
+        orderedFrame
+        |> Frame.filterRowsBy "S2" searchValue
+        |> Frame.filterRowsBy "S2" searchValue
+        |> ignore
+
+    [<Benchmark>]
+    member _.SliceThenStatsSum_1000() =
+        Stats.sum floatSeries.[0L .. 999L] |> ignore

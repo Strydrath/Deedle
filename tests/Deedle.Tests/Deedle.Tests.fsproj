@@ -25,6 +25,7 @@
     <Compile Include="VirtualCsvSource.fs" />
     <Compile Include="VirtualOpMatrix.fs" />
     <Compile Include="VirtualWrappers.fs" />
+    <Compile Include="VirtualOps.fs" />
     <Compile Include="VirtualLookupRange.fs" />
     <Compile Include="VirtualRealSources.fs" />
     <Compile Include="VirtualFrame.fs" />

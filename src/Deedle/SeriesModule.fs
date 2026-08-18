@@ -848,7 +848,7 @@ module Series =
   /// <category>Series transformations</category>
   [<CompiledName("Diff")>]
   let inline diff offset (series:Series<'K, ^T>) =
-    let vectorBuilder = VectorBuilder.Instance
+    let vectorBuilder = (series :> ISeries<_>).VectorBuilder
     let newIndex, vectorR = series.Index.Builder.Shift((series.Index, Vectors.Return 0), offset)
     let _, vectorL = series.Index.Builder.Shift((series.Index, Vectors.Return 0), -offset)
     let cmd = Vectors.Combine(lazy newIndex.KeyCount, [vectorL; vectorR], BinaryTransform.Create< ^T >(OptionalValue.map2 (-)))
@@ -869,7 +869,7 @@ module Series =
   /// <category>Series transformations</category>
   [<CompiledName("PctChange")>]
   let inline pctChange offset (series:Series<'K, ^T>) =
-    let vectorBuilder = VectorBuilder.Instance
+    let vectorBuilder = (series :> ISeries<_>).VectorBuilder
     let newIndex, vectorR = series.Index.Builder.Shift((series.Index, Vectors.Return 0), offset)
     let _, vectorL = series.Index.Builder.Shift((series.Index, Vectors.Return 0), -offset)
     let cmd = Vectors.Combine(lazy newIndex.KeyCount, [vectorL; vectorR], BinaryTransform.Create< ^T >(OptionalValue.map2 (fun l r -> (l - r) / r)))
