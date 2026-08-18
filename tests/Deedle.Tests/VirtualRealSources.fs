@@ -19,6 +19,7 @@ open NUnit.Framework
 open Deedle
 open Deedle.Virtual
 open Deedle.Tests.VirtualInstrumentation
+open Deedle.Virtual.Sources
 open Deedle.Tests.CsvFileVirtualSource
 
 // ------------------------------------------------------------------------------------------------
@@ -29,13 +30,13 @@ module private B6 =
   let nLarge = 100_000L
   let searchValue = "lorem"
   let dataDir = Path.Combine(__SOURCE_DIRECTORY__, "data")
-  let csvPath = Path.Combine(dataDir, CsvLineIndex.defaultDatasetName)
+  let csvPath = Path.Combine(dataDir, CsvHarness.defaultDatasetName)
   let gate = obj()
 
   let ensureDataset () =
     lock gate (fun () ->
       Directory.CreateDirectory dataDir |> ignore
-      CsvLineIndex.ensureSearchCsv csvPath nLarge)
+      CsvHarness.ensureSearchCsv csvPath nLarge)
 
   let expectedMatchCount (length: int64) (step: int) =
     if length <= 0L then 0
@@ -56,8 +57,8 @@ let ``B6 generated CSV has expected schema`` () =
   let fields = idx.ReadFields 0L
   fields.Length |> shouldEqual 4
   fields.[2] |> shouldEqual "lorem"
-  let meta = CsvLineIndex.readMeta B6.csvPath
-  meta.Seed |> shouldEqual CsvLineIndex.defaultSeed
+  let meta = CsvHarness.readMeta B6.csvPath
+  meta.Seed |> shouldEqual CsvHarness.defaultSeed
   meta.RowCount |> shouldEqual B6.nLarge
   // Non-consecutive ids: row ordinals 0 and 1 should not both equal their row index.
   let id0 = Int32.Parse(fields.[0])
@@ -112,7 +113,7 @@ let ``B6 CSV virtual Stats.sum materializes full column pull`` () =
   B6.ensureDataset() |> ignore
   let c, series = CsvFileVirtualSource.createFloatValueSeries B6.csvPath (AccessCounters())
   c.Reset()
-  let expectedSum = CsvLineIndex.readMeta(B6.csvPath).ValueSum
+  let expectedSum = CsvHarness.readMeta(B6.csvPath).ValueSum
   Stats.sum series |> shouldEqual expectedSum
   let d = c.Snapshot()
   d.ValueAtCount |> shouldEqual (int B6.nLarge)

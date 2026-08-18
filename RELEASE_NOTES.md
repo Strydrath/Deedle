@@ -1,5 +1,13 @@
 # Release Notes
 
+## 8.1.0 - Unreleased
+
+### New operations
+
+- **`Virtual.ReadCsv`**: load a CSV file as a virtual `Frame` with an ordered index column (auto-detects `Timestamp` / `DateTime` when present).
+- **`VirtualLookupRange` helpers**: `forRepeatingCycle`, `forCategorical`, `forCategoricalScan`, and `scan` for configuring searchable string columns on virtual sources.
+- **CSV virtual backend** (`Deedle.Virtual.Sources`): `CsvLineIndex`, `CsvVirtualSource`, and `CsvTestData` helpers for file-backed Big Deedle experiments.
+
 ## 8.0.0 - 2026-05-09
 
 ### Breaking changes
