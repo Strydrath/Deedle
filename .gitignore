@@ -25,5 +25,5 @@ pkg/
 *.VisualState.xml
 TestResult*.xml
 
-# Generated benchmark noise (keep optional HTML/MD reports if committed intentionally)
-BenchmarkDotNet.Artifacts/**/*.log
+# BenchmarkDotNet output — archive dated runs under big-deedle/bench-artifacts/, do not commit here
+BenchmarkDotNet.Artifacts/
