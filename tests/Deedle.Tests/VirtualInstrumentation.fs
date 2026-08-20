@@ -233,10 +233,11 @@ type InstrumentedOrdinalSource<'T>
 
     member x.GetSubVector(range) =
       counters.GetSubVectorCount <- counters.GetSubVectorCount + 1
-      match LookupRangeExecutor.getSubVector length valueAt lookupRangeMode asLong range with
+      match LookupRangeExecutor.getSubVector length lookupRangeMode asLong range with
       | Choice1Of2 spec ->
+          let subValueAt i = valueAt (spec.MapRow i)
           InstrumentedOrdinalSource<'T>
-            (spec.Length, spec.ValueAt, counters, ?asLong=spec.AsLong, lookupRange=spec.LookupRange, hasMissing=hasMissing) :> _
+            (spec.Length, subValueAt, counters, ?asLong=spec.AsLong, lookupRange=spec.LookupRange, hasMissing=hasMissing) :> _
       | Choice2Of2 _ -> invalidOp "GetSubVector: unexpected range restriction"
 
   /// Read without recording (for MergeWith composition).
