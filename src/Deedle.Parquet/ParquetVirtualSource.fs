@@ -36,6 +36,13 @@ module private ColumnValues =
     elif typ = typeof<DateTime> then addSeq ((vec :?> IVector<DateTime>).DataSequence)
     else failwithf "ParquetVirtualSource: unsupported column type '%s'" typ.Name
 
+module private OptionalArrays =
+  let sumPresent (values: OptionalValue<float>[]) =
+    let mutable s = 0.0
+    for ov in values do
+      if ov.HasValue && not (Double.IsNaN ov.Value) then s <- s + ov.Value
+    s
+
 /// Shared Parquet file handle: schema, row count, and lazily loaded column arrays.
 type ParquetFileIndex(path: string) =
   let stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read)
@@ -60,11 +67,12 @@ type ParquetFileIndex(path: string) =
     | Some idx -> idx
     | None -> failwithf "ParquetVirtualSource: column '%s' not found" name
 
+  /// Read only the named column from each row group (not the entire row group).
   member private this.ReadColumn (name: string) =
     let field = dataFields.[this.FieldIndex name]
     [| for rgIdx in 0 .. reader.RowGroupCount - 1 do
-         let rg = reader.ReadEntireRowGroupAsync(rgIdx).GetAwaiter().GetResult()
-         yield rg |> Array.find (fun c -> c.Field.Name = field.Name) |]
+         let rgReader = reader.OpenRowGroupReader(rgIdx)
+         yield rgReader.ReadColumnAsync(field).GetAwaiter().GetResult() |]
 
   member private this.ReadColumnValues (name: string) =
     let values = ResizeArray<OptionalValue<obj>>()
@@ -76,61 +84,66 @@ type ParquetFileIndex(path: string) =
   member private this.MaterializeColumn (name: string) (convert: OptionalValue<obj>[] -> obj) =
     columnCache.GetOrAdd(name, fun _ -> box (convert (this.ReadColumnValues name)))
 
-  /// Read a float column directly from Parquet.Data arrays (no ObjectSequence boxing).
+  /// Read a float column; Parquet nulls become [`OptionalValue.Missing`] (not NaN).
   member this.ReadFloatColumn(name: string) =
     columnCache.GetOrAdd(name, fun _ ->
-      let acc = ResizeArray<float>(int rowCount)
+      let acc = ResizeArray<OptionalValue<float>>(int rowCount)
       for col in this.ReadColumn name do
         let data = col.Data
         let n = int col.NumValues
         match data with
         | :? (Nullable<float>[]) as arr ->
             for i in 0 .. n - 1 do
-              acc.Add(if arr.[i].HasValue then arr.[i].Value else nan)
+              acc.Add(if arr.[i].HasValue then OptionalValue(arr.[i].Value) else OptionalValue.Missing)
         | :? (float[]) as arr ->
-            for i in 0 .. n - 1 do acc.Add(arr.[i])
+            for i in 0 .. n - 1 do acc.Add(OptionalValue(arr.[i]))
         | :? (string[]) as arr ->
             for i in 0 .. n - 1 do
               acc.Add(
-                if isNull arr.[i] then nan
-                else Double.Parse(arr.[i], CultureInfo.InvariantCulture))
+                if isNull arr.[i] then OptionalValue.Missing
+                else OptionalValue(Double.Parse(arr.[i], CultureInfo.InvariantCulture)))
         | _ ->
-            // Fallback through Deedle.Parquet typed reader
             let (_, vec) = Implementation.readColumn col
             for ov in (vec :?> IVector<float>).DataSequence do
-              acc.Add(if ov.HasValue then ov.Value else nan)
+              acc.Add(ov)
       box (acc.ToArray()))
-    :?> float[]
+    :?> OptionalValue<float>[]
 
   member this.ReadInt64Column(name: string) =
     this.MaterializeColumn name (fun values ->
       box (values |> Array.map (fun ov ->
         if ov.HasValue then
           match ov.Value with
-          | :? int64 as v -> v
-          | :? int as v -> int64 v
-          | :? string as s -> Int64.Parse(s, CultureInfo.InvariantCulture)
-          | v -> unbox<int64> v
-        else 0L)))
-    :?> int64[]
+          | :? int64 as v -> OptionalValue(v)
+          | :? int as v -> OptionalValue(int64 v)
+          | :? string as s -> OptionalValue(Int64.Parse(s, CultureInfo.InvariantCulture))
+          | v -> OptionalValue(unbox<int64> v)
+        else OptionalValue.Missing)))
+    :?> OptionalValue<int64>[]
 
   member this.ReadDateTimeOffsetColumn(name: string) =
     this.MaterializeColumn name (fun values ->
       box (values |> Array.map (fun ov ->
         if ov.HasValue then
           match ov.Value with
-          | :? DateTimeOffset as dto -> dto
-          | :? DateTime as dt -> DateTimeOffset dt
+          | :? DateTimeOffset as dto -> OptionalValue(dto)
+          | :? DateTime as dt -> OptionalValue(DateTimeOffset dt)
           | :? string as s ->
-            DateTimeOffset.Parse(s, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)
-          | v -> unbox<DateTimeOffset> v
-        else DateTimeOffset.MinValue)))
-    :?> DateTimeOffset[]
+              OptionalValue(
+                DateTimeOffset.Parse(s, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind))
+          | v -> OptionalValue(unbox<DateTimeOffset> v)
+        else OptionalValue.Missing)))
+    :?> OptionalValue<DateTimeOffset>[]
 
   member this.ReadStringColumn(name: string) =
     this.MaterializeColumn name (fun values ->
-      box (values |> Array.map (fun ov -> if ov.HasValue then unbox<string> ov.Value else null)))
-    :?> string[]
+      box (values |> Array.map (fun ov ->
+        if ov.HasValue then
+          match ov.Value with
+          | :? string as s -> if isNull s then OptionalValue.Missing else OptionalValue(s)
+          | v -> OptionalValue(string v)
+        else OptionalValue.Missing)))
+    :?> OptionalValue<string>[]
 
   interface IDisposable with
     member _.Dispose() =
@@ -138,24 +151,35 @@ type ParquetFileIndex(path: string) =
       stream.Dispose()
 
 module internal ParquetColumnSource =
+  let private optionalSource
+      (length: int64)
+      (data: OptionalValue<'T>[])
+      (schemeId: string)
+      (asLong: ('T -> int64) option)
+      (lookupRange: LookupRangeMode<'T>) =
+    OrdinalVirtualSource(
+      length, (fun row -> data.[int row]), schemeId,
+      ?asLong=asLong, lookupRange=lookupRange)
+    :> IVirtualVectorSource
+
   let createFloat (index: ParquetFileIndex) (name: string) (lookupRange: LookupRangeMode<float> option) =
     let data = index.ReadFloatColumn name
     let lr = defaultArg lookupRange LookupRangeUnsupported
-    OrdinalVirtualSource(index.Length, (fun row -> data.[int row]), "parquet-file", lookupRange=lr) :> IVirtualVectorSource
+    optionalSource index.Length data "parquet-file" None lr
 
   let createInt64 (index: ParquetFileIndex) (name: string) (lookupRange: LookupRangeMode<int64> option) =
     let data = index.ReadInt64Column name
     let lr = defaultArg lookupRange LookupRangeUnsupported
-    OrdinalVirtualSource(index.Length, (fun row -> data.[int row]), "parquet-file", asLong=id, lookupRange=lr) :> IVirtualVectorSource
+    optionalSource index.Length data "parquet-file" (Some id) lr
 
   let createDateTimeOffset (index: ParquetFileIndex) (name: string) =
     let data = index.ReadDateTimeOffsetColumn name
-    OrdinalVirtualSource(index.Length, (fun row -> data.[int row]), "parquet-file", asLong=(fun dto -> dto.UtcTicks)) :> IVirtualVectorSource
+    optionalSource index.Length data "parquet-file" (Some (fun dto -> dto.UtcTicks)) LookupRangeUnsupported
 
   let createString (index: ParquetFileIndex) (name: string) (lookupRange: LookupRangeMode<string> option) =
     let data = index.ReadStringColumn name
     let lr = defaultArg lookupRange LookupRangeUnsupported
-    OrdinalVirtualSource(index.Length, (fun row -> data.[int row]), "parquet-file", lookupRange=lr) :> IVirtualVectorSource
+    optionalSource index.Length data "parquet-file" None lr
 
   let resolveIndexColumn (fields: DataField[]) (options: VirtualReadParquetOptions) =
     match options.IndexColumn with
@@ -177,6 +201,7 @@ module internal ParquetColumnSource =
 module ParquetVirtualSource =
   open ParquetColumnSource
 
+  /// Map Parquet schema CLR types only — no column-name heuristics.
   let private columnKind (fields: DataField[]) (columnIndex: int) =
     let field = fields.[columnIndex]
     let clrType = field.ClrType
@@ -186,13 +211,7 @@ module ParquetVirtualSource =
       | ut -> ut
     if baseType = typeof<DateTimeOffset> || baseType = typeof<DateTime> then "datetime"
     elif baseType = typeof<int64> || baseType = typeof<int> then "int64"
-    elif baseType = typeof<float> || baseType = typeof<float32> then "float"
-    elif baseType = typeof<string> then
-      if String.Equals(field.Name, "Value", StringComparison.OrdinalIgnoreCase) then "float"
-      elif String.Equals(field.Name, "Timestamp", StringComparison.OrdinalIgnoreCase)
-           || String.Equals(field.Name, "DateTime", StringComparison.OrdinalIgnoreCase) then "datetime"
-      elif String.Equals(field.Name, "Id", StringComparison.OrdinalIgnoreCase) then "int64"
-      else "string"
+    elif baseType = typeof<float> || baseType = typeof<float32> || baseType = typeof<double> then "float"
     else "string"
 
   let createTypedColumn (index: ParquetFileIndex) (name: string) (kind: string) (lookupRange: LookupRangeMode<string> option) =
@@ -242,7 +261,8 @@ module ParquetTestData =
     use fileIndex = new ParquetFileIndex(parquetPath)
     let data = fileIndex.ReadFloatColumn "Value"
     let src =
-      OrdinalVirtualSource(fileIndex.Length, (fun row -> data.[int row]), "parquet-file")
+      OrdinalVirtualSource(
+        fileIndex.Length, (fun row -> data.[int row]), "parquet-file")
       :> IVirtualVectorSource<float>
     Virtual.CreateOrdinalSeries(src)
 
@@ -251,15 +271,15 @@ module ParquetTestData =
       use idx = new ParquetFileIndex(parquetPath)
       if idx.Length <> rowCount then false
       else
-        let values = idx.ReadFloatColumn "Value"
-        let actual = Array.sum values
+        let actual = OptionalArrays.sumPresent (idx.ReadFloatColumn "Value")
         abs (actual - expectedSum) < 1.0
     with _ -> false
 
   let private writeTypedSearchParquet (parquetPath: string) (csvPath: string) =
-    // Stream CSV lines directly — avoid Frame.ReadCsv type inference issues.
-    let idAcc = ResizeArray<string>()
-    let tsAcc = ResizeArray<string>()
+    // Stream CSV lines into typed Parquet columns (schema CLR types drive Virtual.ReadParquet).
+    // Parquet.Net rejects DateTimeOffset fields — store UTC DateTime and convert on read.
+    let idAcc = ResizeArray<Nullable<int64>>()
+    let tsAcc = ResizeArray<Nullable<DateTime>>()
     let catAcc = ResizeArray<string>()
     let valAcc = ResizeArray<Nullable<float>>()
     use reader = new StreamReader(csvPath)
@@ -267,14 +287,16 @@ module ParquetTestData =
     let mutable line = reader.ReadLine()
     while not (isNull line) do
       let parts = line.Split(',')
-      idAcc.Add(parts.[0])
-      tsAcc.Add(parts.[1])
+      idAcc.Add(Nullable(Int64.Parse(parts.[0], CultureInfo.InvariantCulture)))
+      let dto =
+        DateTimeOffset.Parse(parts.[1], CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)
+      tsAcc.Add(Nullable(dto.UtcDateTime))
       catAcc.Add(parts.[2])
       valAcc.Add(Nullable(Double.Parse(parts.[3].TrimEnd('\r', '\n'), CultureInfo.InvariantCulture)))
       line <- reader.ReadLine()
     let schema = ParquetSchema([|
-      DataField("Id", typeof<string>) :> Field
-      DataField("Timestamp", typeof<string>) :> Field
+      DataField("Id", typeof<Nullable<int64>>) :> Field
+      DataField("Timestamp", typeof<Nullable<DateTime>>) :> Field
       DataField("Category", typeof<string>) :> Field
       DataField("Value", typeof<Nullable<float>>) :> Field |])
     let dataFields = schema.GetDataFields()
@@ -304,6 +326,7 @@ module ParquetTestData =
 module VirtualParquetExtensions =
   type Deedle.Virtual.Virtual with
     /// Load a Parquet file as a virtual frame with an ordered row index.
+    /// Selected columns are materialized on first access and cached in memory.
     static member ReadParquet(path: string, ?indexColumn: string, ?searchColumn: string, ?searchLookupRange: LookupRangeMode<string>, ?columnKeys: string list) =
       let searchCol =
         match searchColumn with
@@ -314,3 +337,4 @@ module VirtualParquetExtensions =
           SearchColumn = searchCol
           ColumnKeys = columnKeys }
       ParquetVirtualSource.createFrame path options
+

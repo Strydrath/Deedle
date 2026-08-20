@@ -89,3 +89,29 @@ let ``B13 Virtual ReadParquet builds searchable frame`` () =
   frame.RowCount |> shouldEqual (int B13.nLarge)
   let filtered = frame |> Frame.filterRowsBy "Category" "lorem"
   filtered.RowCount |> shouldEqual 12_500
+
+[<Test>]
+let ``B13 Parquet null floats stay missing not NaN`` () =
+  let path = Path.Combine(Path.GetTempPath(), sprintf "deedle-b13-nulls-%d.parquet" Environment.TickCount)
+  try
+    let schema = Parquet.Schema.ParquetSchema([|
+      Parquet.Schema.DataField("Value", typeof<Nullable<float>>) :> Parquet.Schema.Field |])
+    let fields = schema.GetDataFields()
+    do
+      use stream = File.Create path
+      use writer = Parquet.ParquetWriter.CreateAsync(schema, stream).GetAwaiter().GetResult()
+      use rg = writer.CreateRowGroup()
+      let data = [| Nullable(1.0); Nullable(); Nullable(3.0) |]
+      rg.WriteColumnAsync(Parquet.Data.DataColumn(fields.[0], data)).GetAwaiter().GetResult()
+    use idx = new ParquetFileIndex(path)
+    let values = idx.ReadFloatColumn "Value"
+    values.Length |> shouldEqual 3
+    values.[0].HasValue |> shouldEqual true
+    values.[0].Value |> shouldEqual 1.0
+    values.[1].HasValue |> shouldEqual false
+    values.[2].HasValue |> shouldEqual true
+    let series = ParquetTestData.createFloatValueSeries path
+    series.Values |> Seq.toList |> shouldEqual [ 1.0; 3.0 ]
+    Stats.sum series |> shouldEqual 4.0
+  finally
+    if File.Exists path then File.Delete path
