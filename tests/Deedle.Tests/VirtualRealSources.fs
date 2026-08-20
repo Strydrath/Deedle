@@ -131,7 +131,7 @@ let ``B6 file-backed filter is faster than materialized full scan`` () =
     B6.elapsedMs (fun () ->
       let frame = Frame.ReadCsv(B6.csvPath, inferRows=100)
       let col = frame.GetColumn<string>("Category")
-      let mutable count = 0
-      for i in 0 .. frame.RowCount - 1 do
-        if col.GetAt(i) = B6.searchValue then count <- count + 1)
+      seq { for i in 0 .. frame.RowCount - 1 do if col.GetAt(i) = B6.searchValue then yield () }
+      |> Seq.length
+      |> ignore)
   virtualMs |> should be (lessThan materializedMs)

@@ -46,22 +46,11 @@ module VirtualLookupRange =
 
   /// Build categorical IndexList by scanning column values once at frame construction.
   let forCategoricalScan (length: int64) (valueAt: int64 -> 'T) =
-    let buckets = System.Collections.Generic.Dictionary<'T, ResizeArray<int64>>()
-    for i in 0L .. length - 1L do
-      let v = valueAt i
-      let bucket =
-        match buckets.TryGetValue v with
-        | true, b -> b
-        | false, _ ->
-          let b = ResizeArray()
-          buckets.[v] <- b
-          b
-      bucket.Add(i)
-    let map =
-      buckets
-      |> Seq.map (fun (KeyValue(k, v)) -> k, List.ofSeq v)
-      |> Map.ofSeq
-    forCategorical map
+    [ for i in 0L .. length - 1L -> valueAt i, i ]
+    |> List.groupBy fst
+    |> List.map (fun (k, pairs) -> k, List.map snd pairs)
+    |> Map.ofList
+    |> forCategorical
 
   /// Correct but O(N) per filter — scans all rows when LookupRange is invoked.
   let scan (length: int64) (valueAt: int64 -> 'T) =
