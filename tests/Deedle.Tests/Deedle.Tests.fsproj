@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Deedle\Deedle.fsproj" />
+    <ProjectReference Include="..\..\src\Deedle.Parquet\Deedle.Parquet.fsproj" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../Common/FsUnit.fs">
@@ -28,6 +29,7 @@
     <Compile Include="VirtualOps.fs" />
     <Compile Include="VirtualLookupRange.fs" />
     <Compile Include="VirtualRealSources.fs" />
+    <Compile Include="VirtualB13Sources.fs" />
     <Compile Include="VirtualFrame.fs" />
     <Compile Include="VirtualPartitioned.fs" />
     <Compile Include="Formatting.fs" />
