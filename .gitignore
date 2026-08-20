@@ -24,3 +24,6 @@ pkg/
 *.ide
 *.VisualState.xml
 TestResult*.xml
+
+# Generated benchmark noise (keep optional HTML/MD reports if committed intentionally)
+BenchmarkDotNet.Artifacts/**/*.log

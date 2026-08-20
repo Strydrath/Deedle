@@ -228,15 +228,23 @@ module B4ProfileReport =
   let writeBigDeedleResults () =
     let rows = collect ()
     let repoRoot = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "..", ".."))
-    let outPath = Path.Combine(repoRoot, "big-deedle", "b4-profile-metrics.md")
-    File.WriteAllText(outPath, toMarkdown rows (DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm UTC")))
-    outPath
+    let outDir = Path.Combine(repoRoot, "big-deedle")
+    let outPath = Path.Combine(outDir, "b4-profile-metrics.md")
+    // Optional sibling checkout — CI that clones only Deedle must not fail.
+    if Directory.Exists outDir then
+      File.WriteAllText(outPath, toMarkdown rows (DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm UTC")))
+      Some outPath
+    else None
 
 [<Test>]
-let ``B4 profile baseline report writes big-deedle metrics`` () =
-  let path = B4ProfileReport.writeBigDeedleResults()
-  File.Exists(path) |> shouldEqual true
-  B4ProfileReport.collect() |> List.length |> shouldEqual 8
+let ``B4 profile baseline report writes big-deedle metrics when sibling repo exists`` () =
+  match B4ProfileReport.writeBigDeedleResults() with
+  | Some path ->
+      File.Exists(path) |> shouldEqual true
+      B4ProfileReport.collect() |> List.length |> shouldEqual 8
+  | None ->
+      // Sibling big-deedle/ not present (typical CI) — still verify collect() shape.
+      B4ProfileReport.collect() |> List.length |> shouldEqual 8
 
 [<Test>]
 let ``B4 Step LookupRange filters virtually with zero ValueAt at filter time`` () =
