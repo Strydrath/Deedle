@@ -210,19 +210,18 @@ module Ranges =
         // Coalesce a custom sequence of keys into contiguous (lo, hi) blocks so
         // partitioned / Ranges-based sources can apply LookupRange scan results.
         let ops = ranges.Operations
-        let coalesced = ResizeArray<_>()
-        let mutable lo = Unchecked.defaultof<'T>
-        let mutable hi = Unchecked.defaultof<'T>
-        let mutable hasBlock = false
-        for k in keys do
-          if not hasBlock then
-            lo <- k; hi <- k; hasBlock <- true
-          elif ops.Compare(ops.IncrementBy(hi, 1L), k) = 0 then
-            hi <- k
-          else
-            coalesced.Add(lo, hi)
-            lo <- k; hi <- k
-        if hasBlock then coalesced.Add(lo, hi)
+        let isSuccessor hi k = ops.Compare(ops.IncrementBy(hi, 1L), k) = 0
+        let completed, current =
+          (([], None), keys)
+          ||> Seq.fold (fun (acc, block) k ->
+              match block with
+              | None -> acc, Some(k, k)
+              | Some(lo, hi) when isSuccessor hi k -> acc, Some(lo, k)
+              | Some closed -> closed::acc, Some(k, k))
+        let coalesced =
+          match current with
+          | None -> List.rev completed
+          | Some block -> List.rev (block::completed)
         Ranges(coalesced, ops)
 
     | _ -> failwith "restrictRanges: Custom ranges are not supported"

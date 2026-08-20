@@ -200,16 +200,12 @@ type InstrumentedOrdinalSource<'T>
                | :? InstrumentedOrdinalSource<'T> as src -> src.Length, src.RawValueAt
                | _ -> failwith "MergeWith: expected InstrumentedOrdinalSource" ]
       let total = parts |> List.sumBy fst
-      let mergedValueAt (i: int64) =
-        let mutable offset = 0L
-        let mutable result = None
-        for (len, vat) in parts do
-          if result.IsNone then
-            if i < offset + len then result <- Some(vat (i - offset))
-            else offset <- offset + len
-        match result with
-        | Some v -> v
-        | None -> failwithf "MergeWith: index %d out of range (len=%d)" i total
+      let rec valueAtMerged i = function
+        | [] -> failwithf "MergeWith: index %d out of range (len=%d)" i total
+        | (len, vat)::rest ->
+            if i < len then vat i
+            else valueAtMerged (i - len) rest
+      let mergedValueAt i = valueAtMerged i parts
       InstrumentedOrdinalSource<'T>
         (total, mergedValueAt, counters, ?asLong=asLong, lookupRange=lookupRangeMode, hasMissing=hasMissing) :> _
 
