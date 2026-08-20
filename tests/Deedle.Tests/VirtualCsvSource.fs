@@ -81,3 +81,51 @@ let ``B8 VirtualLookupRange.forCategoricalScan filters without Step cycle`` () =
   let filtered = frame |> Frame.filterRowsBy "Category" "lorem"
   FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
   filtered.RowCount |> shouldEqual 100
+
+[<Test>]
+let ``B8 empty and NA cells become missing values`` () =
+  let csvPath = Path.Combine(Path.GetTempPath(), "deedle-b8-missing-cells.csv")
+  File.WriteAllText(
+    csvPath,
+    "Timestamp,Id,Value\r\n" +
+    "2000-01-01T00:00:00.0000000+00:00,1,1.5\r\n" +
+    "2000-01-01T00:00:01.0000000+00:00,,NA\r\n" +
+    "2000-01-01T00:00:02.0000000+00:00,3,\r\n")
+  let frame =
+    Virtual.ReadCsv(csvPath, indexColumn = "Timestamp", columnKeys = [ "Id"; "Value" ])
+  let ids = frame.GetColumn<int64>("Id")
+  let values = frame.GetColumn<float>("Value")
+  ids.TryGetAt(0).HasValue |> shouldEqual true
+  ids.TryGetAt(1).HasValue |> shouldEqual false
+  ids.TryGetAt(2).HasValue |> shouldEqual true
+  values.TryGetAt(0).HasValue |> shouldEqual true
+  values.TryGetAt(1).HasValue |> shouldEqual false
+  values.TryGetAt(2).HasValue |> shouldEqual false
+
+[<Test>]
+let ``B8 forRepeatingCycle unknown value yields empty filter`` () =
+  let csvPath = Path.Combine(Path.GetTempPath(), "deedle-b8-unknown-cat.csv")
+  CsvHarness.ensureSearchCsv csvPath 64L |> ignore
+  let frame =
+    Virtual.ReadCsv(
+      csvPath,
+      indexColumn = "Timestamp",
+      searchColumn = "Category",
+      searchLookupRange = VirtualLookupRange.forRepeatingCycle CsvTestData.words8,
+      columnKeys = [ "Category" ])
+  let filtered = frame |> Frame.filterRowsBy "Category" "not-a-category"
+  filtered.RowCount |> shouldEqual 0
+
+[<Test>]
+let ``B8 quoted CSV fields with commas parse correctly`` () =
+  let csvPath = Path.Combine(Path.GetTempPath(), "deedle-b8-quoted.csv")
+  File.WriteAllText(
+    csvPath,
+    "Timestamp,Label,Value\r\n" +
+    "2000-01-01T00:00:00.0000000+00:00,\"hello, world\",2.5\r\n" +
+    "2000-01-01T00:00:01.0000000+00:00,\"a \"\"b\"\" c\",3.5\r\n")
+  let frame =
+    Virtual.ReadCsv(csvPath, indexColumn = "Timestamp", columnKeys = [ "Label"; "Value" ])
+  frame.GetColumn<string>("Label").GetAt(0) |> shouldEqual "hello, world"
+  frame.GetColumn<string>("Label").GetAt(1) |> shouldEqual "a \"b\" c"
+  frame.GetColumn<float>("Value").GetAt(0) |> shouldEqual 2.5
