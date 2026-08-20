@@ -100,8 +100,9 @@ and VirtualOrdinalIndex(ranges:Ranges<int64>, source:IVirtualVectorSource) =
   /// Returns the source that is used to identify the index.
   member x.Source = source
 
-  /// Structural equality on the key intervals (not source identity). Two ordinal
-  /// virtual frames of the same length compare equal, which lets Join/Zip skip Union.
+  /// Structural equality on the key intervals only (not source identity). Two ordinal
+  /// virtual frames of the same length therefore compare equal, which lets Join/Zip
+  /// skip Union. Do not use these indices as dictionary keys if source identity matters.
   override x.Equals(another) =
     match another with
     | :? VirtualOrdinalIndex as other -> ranges.Ranges = other.Ranges.Ranges
