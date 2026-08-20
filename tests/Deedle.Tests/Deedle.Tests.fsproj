@@ -20,6 +20,11 @@
     <Compile Include="Frame.fs" />
     <Compile Include="LazySeries.fs" />
     <Compile Include="Ranges.fs" />
+    <Compile Include="VirtualInstrumentation.fs" />
+    <Compile Include="CsvFileVirtualSource.fs" />
+    <Compile Include="VirtualOpMatrix.fs" />
+    <Compile Include="VirtualLookupRange.fs" />
+    <Compile Include="VirtualRealSources.fs" />
     <Compile Include="VirtualFrame.fs" />
     <Compile Include="VirtualPartitioned.fs" />
     <Compile Include="Formatting.fs" />
