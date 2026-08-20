@@ -18,6 +18,7 @@ open Deedle.Addressing
 open Deedle.Vectors
 open Deedle.Vectors.Virtual
 open Deedle.Virtual
+open Deedle.Vectors.Virtual
 
 module Address = LinearAddress
 
@@ -125,35 +126,48 @@ module FrameProbe =
     SchemeProbe.isVirtualScheme f.RowIndex.AddressingScheme
 
 // ------------------------------------------------------------------------------------------------
-// Instrumented ordinal IVirtualVectorSource
+// Counting wrapper for library virtual sources (B6 / harness)
 // ------------------------------------------------------------------------------------------------
 
-/// Strided custom range used by filter/Search (same shape as VirtualFrame.LinearSubRange).
-type StepRange =
-  { Offset: int
-    Step: int }
-  interface IRangeRestriction<Address> with
-    member x.Count = failwith "Count not supported"
-  interface seq<Address> with
-    member x.GetEnumerator() : System.Collections.Generic.IEnumerator<Address> =
-      failwith "enumeration not supported"
-  interface System.Collections.IEnumerable with
-    member x.GetEnumerator() : System.Collections.IEnumerator =
-      failwith "enumeration not supported"
+type CountingVirtualSource<'T>(counters: AccessCounters, inner: IVirtualVectorSource<'T>) =
+  interface IVirtualVectorSource with
+    member _.Length = inner.Length
+    member _.AddressingSchemeID = inner.AddressingSchemeID
+    member _.ElementType = inner.ElementType
+    member _.AddressOperations = inner.AddressOperations
+    member _.Invoke(op) = op.Invoke(inner)
 
-/// How LookupRange behaves (B4 quality axis).
-type LookupRangeMode<'T> =
-  | LookupRangeUnsupported
-  /// Return a tight Fixed absolute index range for the searched value.
-  | LookupRangeExactFixed of ('T -> int64 * int64)
-  /// Return a Custom strided range (offset, step) over the ordinal domain.
-  | LookupRangeStep of ('T -> int * int)
-  /// Naive over-approximation: entire ordinal domain (wrong for sparse matches).
-  | LookupRangeFullFixed
-  /// Precomputed absolute indices (irregular/sparse matches — simulates an index).
-  | LookupRangeIndexList of ('T -> int64 list)
+  interface IVirtualVectorSource<'T> with
+    member _.MergeWith(sources) =
+      counters.MergeWithCount <- counters.MergeWithCount + 1
+      inner.MergeWith(sources)
 
-/// Linear ordinal source over [0 .. length-1] with shared access counters.
+    member _.LookupRange(v) =
+      counters.LookupRangeCount <- counters.LookupRangeCount + 1
+      inner.LookupRange(v)
+
+    member _.LookupValue(k, l, check) =
+      counters.LookupValueCount <- counters.LookupValueCount + 1
+      inner.LookupValue(k, l, check)
+
+    member _.ValueAt(loc) =
+      counters.RecordValueAt(Address.asInt64 loc.Address)
+      inner.ValueAt(loc)
+
+    member _.GetSubVector(range) =
+      counters.GetSubVectorCount <- counters.GetSubVectorCount + 1
+      CountingVirtualSource<'T>(counters, inner.GetSubVector(range)) :> IVirtualVectorSource<'T>
+
+module CountingVirtualSource =
+  let Wrap (counters: AccessCounters) (source: IVirtualVectorSource) =
+    source.Invoke
+      { new IVirtualVectorSourceOperation<IVirtualVectorSource> with
+          member _.Invoke<'T>(src: IVirtualVectorSource<'T>) =
+            CountingVirtualSource<'T>(counters, src) :> IVirtualVectorSource }
+
+// ------------------------------------------------------------------------------------------------
+// Instrumented ordinal IVirtualVectorSource
+// ------------------------------------------------------------------------------------------------
 type InstrumentedOrdinalSource<'T>
     ( length: int64,
       valueAt: int64 -> 'T,
@@ -201,26 +215,7 @@ type InstrumentedOrdinalSource<'T>
 
     member x.LookupRange(v) =
       counters.LookupRangeCount <- counters.LookupRangeCount + 1
-      match lookupRangeMode with
-      | LookupRangeUnsupported -> failwith "LookupRange: not configured on InstrumentedOrdinalSource"
-      | LookupRangeExactFixed f ->
-          let lo, hi = f v
-          RangeRestriction.Fixed(Address.ofInt64 lo, Address.ofInt64 hi)
-      | LookupRangeStep f ->
-          let offset, step = f v
-          RangeRestriction.Custom { Offset = offset; Step = step }
-      | LookupRangeFullFixed ->
-          RangeRestriction.Fixed(Address.ofInt64 0L, Address.ofInt64(length - 1L))
-      | LookupRangeIndexList f ->
-          let addrs = f v |> List.map Address.ofInt64
-          let count = int64 addrs.Length
-          ({ new IRangeRestriction<Address> with
-              member x.Count = count
-             interface seq<Address> with
-               member x.GetEnumerator() = (addrs :> seq<_>).GetEnumerator()
-             interface System.Collections.IEnumerable with
-               member x.GetEnumerator() = (addrs :> seq<_>).GetEnumerator() :> System.Collections.IEnumerator }
-           |> RangeRestriction.Custom)
+      LookupRangeExecutor.lookupRange length lookupRangeMode v "InstrumentedOrdinalSource"
 
     member x.LookupValue(k, l, check) =
       counters.LookupValueCount <- counters.LookupValueCount + 1
@@ -242,42 +237,11 @@ type InstrumentedOrdinalSource<'T>
 
     member x.GetSubVector(range) =
       counters.GetSubVectorCount <- counters.GetSubVectorCount + 1
-      match range.AsAbsolute(length) with
-      | Choice1Of2(nlo, nhi) ->
-          let lo = Address.asInt64 nlo
-          let hi = Address.asInt64 nhi
-          if hi < lo then invalidOp "GetSubVector: hi < lo"
-          let newLen = hi - lo + 1L
-          let subValueAt i = valueAt (lo + i)
-          let subLookup =
-            match lookupRangeMode with
-            | LookupRangeUnsupported -> LookupRangeUnsupported
-            | LookupRangeExactFixed f ->
-                LookupRangeExactFixed(fun v ->
-                  let a, b = f v
-                  // Clip / shift into sub-range coordinates when possible
-                  max 0L (a - lo), min (newLen - 1L) (b - lo))
-            | LookupRangeStep f ->
-                // Absolute domain still uses original valueAt via subValueAt remapping;
-                // step search offsets stay relative to the sub-source ordinal domain.
-                LookupRangeStep f
-            | LookupRangeFullFixed -> LookupRangeFullFixed
-            | LookupRangeIndexList _ -> lookupRangeMode
-          InstrumentedOrdinalSource<'T>(newLen, subValueAt, counters, ?asLong=asLong, lookupRange=subLookup, hasMissing=hasMissing) :> _
-      | Choice2Of2(:? StepRange as lr) ->
-          let subValueAt i = valueAt (int64 lr.Offset + int64 lr.Step * i)
-          let count =
-            if length = 0L then 0L
-            else
-              let span = length
-              let baseCount = span / int64 lr.Step
-              if span % int64 lr.Step > int64 lr.Offset then baseCount + 1L else baseCount
-          let newLen = max 0L count
-          InstrumentedOrdinalSource<'T>(newLen, subValueAt, counters, ?asLong=asLong, lookupRange=lookupRangeMode, hasMissing=hasMissing) :> _
-      | Choice2Of2 ar ->
-          let addrs = ar |> Seq.map Address.asInt64 |> List.ofSeq
-          let subValueAt i = valueAt addrs.[int i]
-          InstrumentedOrdinalSource<'T>(int64 addrs.Length, subValueAt, counters, ?asLong=asLong, lookupRange=lookupRangeMode, hasMissing=hasMissing) :> _
+      match LookupRangeExecutor.getSubVector length valueAt lookupRangeMode asLong range with
+      | Choice1Of2 spec ->
+          InstrumentedOrdinalSource<'T>
+            (spec.Length, spec.ValueAt, counters, ?asLong=spec.AsLong, lookupRange=spec.LookupRange, hasMissing=hasMissing) :> _
+      | Choice2Of2 _ -> invalidOp "GetSubVector: unexpected range restriction"
 
   /// Read without recording (for MergeWith composition).
   member x.RawValueAt(i: int64) = valueAt i

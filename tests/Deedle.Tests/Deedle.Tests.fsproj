@@ -22,6 +22,7 @@
     <Compile Include="Ranges.fs" />
     <Compile Include="VirtualInstrumentation.fs" />
     <Compile Include="CsvFileVirtualSource.fs" />
+    <Compile Include="VirtualCsvSource.fs" />
     <Compile Include="VirtualOpMatrix.fs" />
     <Compile Include="VirtualLookupRange.fs" />
     <Compile Include="VirtualRealSources.fs" />
