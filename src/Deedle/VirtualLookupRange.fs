@@ -165,6 +165,7 @@ module LookupRangeExecutor =
 
   /// Intersect two LookupRange results (same original address domain).
   /// Used to fuse two `filterRowsBy` predicates into one sub-vector restriction.
+  /// Never enumerates [`StepRange`] (its enumerator throws by design).
   let intersect (a: RangeRestriction<Address>) (b: RangeRestriction<Address>) =
     let fromAddrs addrs =
       let arr = addrs |> Seq.distinct |> Array.ofSeq
@@ -172,6 +173,22 @@ module LookupRangeExecutor =
     let tryStep = function
       | RangeRestriction.Custom(:? StepRange as s) -> Some s
       | _ -> None
+    let matchesStep (s: StepRange) (addr: Address) =
+      let i = Address.asInt64 addr
+      s.Step <> 0 &&
+      i >= int64 s.Offset &&
+      (i - int64 s.Offset) % int64 s.Step = 0L
+    let filterAddrsByStep (s: StepRange) (addrs: seq<Address>) =
+      fromAddrs (addrs |> Seq.filter (matchesStep s))
+    let collectStepInFixed (s: StepRange) (lo64: int64) (hi64: int64) =
+      if s.Step = 0 then emptyRange
+      else
+        let rec collect i acc =
+          let addr = int64 s.Offset + int64 s.Step * i
+          if addr > hi64 then List.rev acc
+          elif addr < lo64 then collect (i + 1L) acc
+          else collect (i + 1L) (Address.ofInt64 addr :: acc)
+        fromAddrs (collect 0L [])
     match tryStep a, tryStep b, a, b with
     | Some s1, Some s2, _, _ ->
         if s1.Step = 0 || s2.Step = 0 then emptyRange
@@ -184,23 +201,28 @@ module LookupRangeExecutor =
             let m = max ao bo
             let rem = ((m - ao) % p + p) % p
             let startA = if rem = 0 then m else m + (p - rem)
-            let rec loop x =
-              if (x - bo) % q = 0 then x else loop (x + p)
-            RangeRestriction.Custom { Offset = loop startA; Step = lcm }
+            // Congruence guarantees a hit within one period of the other stride.
+            let maxSteps = abs q / g + 1
+            let rec loop x guard =
+              if guard <= 0 then None
+              elif (x - bo) % q = 0 then Some x
+              else loop (x + p) (guard - 1)
+            match loop startA maxSteps with
+            | Some offset -> RangeRestriction.Custom { Offset = offset; Step = lcm }
+            | None -> emptyRange
     | _, _, RangeRestriction.Fixed(lo1, hi1), RangeRestriction.Fixed(lo2, hi2) ->
         let lo = if lo1 > lo2 then lo1 else lo2
         let hi = if hi1 < hi2 then hi1 else hi2
         if lo <= hi then RangeRestriction.Fixed(lo, hi) else emptyRange
     | Some s, None, _, RangeRestriction.Fixed(lo, hi)
     | None, Some s, RangeRestriction.Fixed(lo, hi), _ ->
-        let lo64, hi64 = Address.asInt64 lo, Address.asInt64 hi
-        let rec collect i acc =
-          let addr = int64 s.Offset + int64 s.Step * i
-          if addr > hi64 then List.rev acc
-          elif addr < lo64 then collect (i + 1L) acc
-          else collect (i + 1L) (Address.ofInt64 addr :: acc)
-        fromAddrs (collect 0L [])
+        collectStepInFixed s (Address.asInt64 lo) (Address.asInt64 hi)
+    // Step ∩ IndexList (or any enumerable Custom): filter the enumerable; never enumerate Step.
+    | Some s, None, _, RangeRestriction.Custom ar
+    | None, Some s, RangeRestriction.Custom ar, _ ->
+        filterAddrsByStep s ar
     | _, _, RangeRestriction.Custom ar1, RangeRestriction.Custom ar2 ->
+        // Both non-Step Customs (IndexList ∩ IndexList, etc.)
         let set2 = System.Collections.Generic.HashSet<_>(ar2)
         fromAddrs (ar1 |> Seq.filter set2.Contains)
     | _, _, RangeRestriction.Custom ar, RangeRestriction.Fixed(lo, hi)

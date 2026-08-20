@@ -19,6 +19,8 @@ open Deedle.Vectors
 open Deedle.Vectors.Virtual
 open Deedle.Tests.VirtualInstrumentation
 
+module Address = LinearAddress
+
 module private Range =
   let step offset step =
     RangeRestriction.Custom { Offset = offset; Step = step } : RangeRestriction<Address>
@@ -126,6 +128,52 @@ let ``B9 filterRowsBy2 of disjoint values on the same column is empty`` () =
   let _, frame, words = InstrumentedOrdinalSource.createOrderedSearchFrameWith 64L (LookupRangeStep (fun _ -> 0, 1))
   let empty = frame |> Frame.filterRowsBy2 "S2" words.[0] "S2" words.[1]
   empty.RowCount |> shouldEqual 0
+
+[<Test>]
+let ``B9 filterRowsBy2 Step intersect IndexList does not throw`` () =
+  let n = 64L
+  let words = "lorem ipsum dolor sit amet consectetur adipiscing elit".Split(' ')
+  let valueAt i = words.[int (i % int64 words.Length)]
+  let c = AccessCounters()
+  let start = DateTimeOffset(DateTime(2000, 1, 1), TimeSpan.FromHours(-1.0))
+  let idx =
+    InstrumentedOrdinalSource<DateTimeOffset>
+      (n, (fun i -> start.AddTicks(i * 123456789L)), c, asLong=(fun dto -> dto.UtcTicks), hasMissing=false)
+  let stepCol =
+    InstrumentedOrdinalSource<string>
+      (n, valueAt, c,
+       lookupRange=LookupRangeStep (fun v -> words |> Array.findIndex ((=) v), words.Length),
+       hasMissing=false)
+  let listCol =
+    InstrumentedOrdinalSource<string>
+      (n, valueAt, c, lookupRange=VirtualLookupRange.forCategoricalScan n valueAt, hasMissing=false)
+  let frame =
+    Virtual.CreateFrame(idx, ["Step"; "List"], [stepCol :> IVirtualVectorSource; listCol :> IVirtualVectorSource])
+  let fused = frame |> Frame.filterRowsBy2 "Step" "lorem" "List" "lorem"
+  FrameProbe.rowIndexIsVirtual fused |> shouldEqual true
+  let expected = frame |> Frame.filterRowsBy "Step" "lorem"
+  fused.RowCount |> shouldEqual expected.RowCount
+
+[<Test>]
+let ``B9 LookupRangeExecutor.intersect Step with IndexList stays enumerable`` () =
+  let step = RangeRestriction.Custom { Offset = 0; Step = 2 } : RangeRestriction<Address>
+  let listAddrs = [ 0L; 2L; 3L; 4L; 7L ] |> List.map Address.ofInt64
+  let list =
+    ({ new IRangeRestriction<Address> with
+        member _.Count = int64 listAddrs.Length
+       interface seq<Address> with
+         member _.GetEnumerator() = (listAddrs :> seq<_>).GetEnumerator()
+       interface System.Collections.IEnumerable with
+         member _.GetEnumerator() = (listAddrs :> seq<_>).GetEnumerator() :> System.Collections.IEnumerator }
+     |> RangeRestriction.Custom)
+  let hit = LookupRangeExecutor.intersect step list
+  let addrsOf = function
+    | RangeRestriction.Custom ar -> ar |> Seq.map Address.asInt64 |> Seq.toList
+    | _ -> failwith "expected Custom range"
+  // Even addresses from the list: 0, 2, 4
+  addrsOf hit |> shouldEqual [ 0L; 2L; 4L ]
+  // Symmetric order
+  addrsOf (LookupRangeExecutor.intersect list step) |> shouldEqual [ 0L; 2L; 4L ]
 
 [<Test>]
 let ``B9 Projection pushdown does not ValueAt unused columns at filter time`` () =
