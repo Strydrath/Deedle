@@ -120,26 +120,46 @@ let ``B3 GroupBy materializes to linear storage`` () =
   c.Snapshot().ValueAtCount |> should be (greaterThan 0)
 
 [<Test>]
-let ``B3 Window materializes to linear storage`` () =
+let ``B3 WindowSize keeps nested window series virtual`` () =
+  let _, s = InstrumentedOrdinalSource.createFloatSeries 1_000L
+  let windows = s |> Series.windowSizeInto (5, Boundary.Skip) DataSegment.data
+  let first = windows.GetAt(0)
+  Op.assertVirtual first
+  first.KeyCount |> shouldEqual 5
+
+[<Test>]
+let ``B3 Window aggregate of sums materializes the result series`` () =
   let _, s = InstrumentedOrdinalSource.createFloatSeries 1_000L
   let windows = s |> Series.windowSizeInto (5, Boundary.AtEnding) (fun w -> Stats.sum w.Data)
   Op.assertLinear windows
 
 [<Test>]
-let ``B3 Shift materializes to linear storage`` () =
+let ``B3 Shift preserves virtual storage without ValueAt`` () =
   let c, s = InstrumentedOrdinalSource.createFloatSeries Op.nSmall
+  c.Reset()
   let shifted = s |> Series.shift 1
-  Op.assertLinear shifted
-  c.Snapshot().ValueAtCount |> should be (greaterThan 0)
+  SeriesProbe.isVirtual shifted |> shouldEqual true
+  c.Snapshot().ValueAtCount |> shouldEqual 0
+  shifted.KeyCount |> shouldEqual (int Op.nSmall - 1)
+  shifted.[1L] |> shouldEqual s.[0L]
 
 [<Test>]
-let ``B3 DropMissing materializes to linear storage`` () =
+let ``B3 Slice then Stats.sum pulls only the slice`` () =
+  let c, s = InstrumentedOrdinalSource.createFloatSeries Op.nMed
+  let sliced = s.[100L .. 199L]
+  c.Reset()
+  Stats.sum sliced |> shouldEqual 14950.0
+  c.Snapshot().ValueAtCount |> shouldEqual 100
+
+[<Test>]
+let ``B3 DropMissing stays virtual after a presence scan`` () =
   let c = AccessCounters()
   let src =
     InstrumentedOrdinalSource<float>(Op.nSmall, float, c, hasMissing=true)
   let s = Virtual.CreateOrdinalSeries(src)
   let dropped = s |> Series.dropMissing
-  Op.assertLinear dropped
+  Op.assertVirtual dropped
+  dropped.ValueCount |> shouldEqual dropped.KeyCount
   c.Snapshot().ValueAtCount |> should be (greaterThan 0)
 
 [<Test>]
@@ -150,7 +170,16 @@ let ``B3 SortBy materializes to linear storage`` () =
   c.Snapshot().ValueAtCount |> should be (greaterThan 0)
 
 [<Test>]
-let ``B3 Intersect materializes to linear storage`` () =
+let ``B3 SortByKey on already-ordered virtual series is a no-op`` () =
+  let c, s = InstrumentedOrdinalSource.createFloatSeries 1_000L
+  c.Reset()
+  let sorted = s |> Series.sortByKey
+  Op.assertVirtual sorted
+  c.Snapshot().ValueAtCount |> shouldEqual 0
+  sorted.KeyCount |> shouldEqual s.KeyCount
+
+[<Test>]
+let ``B3 Intersect of (key, value) pairs materializes to linear storage`` () =
   let _, s = InstrumentedOrdinalSource.createOrdinalSeries Op.nSmall
   let a = s.[0L .. 500L]
   let b = s.[250L .. 750L]
@@ -158,20 +187,20 @@ let ``B3 Intersect materializes to linear storage`` () =
   Op.assertLinear inter
 
 [<Test>]
-let ``B3 ZipAlign join path materializes typical result`` () =
+let ``B3 ZipAlign of identical ordinal virtual series stays virtual`` () =
   let _, s1 = InstrumentedOrdinalSource.createFloatSeries Op.nSmall
   let _, s2 = InstrumentedOrdinalSource.createFloatSeries Op.nSmall
   let zipped = Series.zipAlign JoinKind.Inner Lookup.Exact s1 s2
-  Op.assertLinear zipped
+  Op.assertVirtual zipped
 
 [<Test>]
-let ``B3 Frame join of ordinal virtual frames materializes row index`` () =
+let ``B3 Frame join of identical ordinal virtual frames stays virtual`` () =
   let _, s1 = InstrumentedOrdinalSource.createFloats Op.nSmall
   let _, s2 = InstrumentedOrdinalSource.createFloats Op.nSmall
   let f1 = Virtual.CreateOrdinalFrame(["A"], [s1 :> IVirtualVectorSource])
   let f2 = Virtual.CreateOrdinalFrame(["B"], [s2 :> IVirtualVectorSource])
   let joined = f1.Join(f2, JoinKind.Outer)
-  FrameProbe.rowIndexIsVirtual joined |> shouldEqual false
+  FrameProbe.rowIndexIsVirtual joined |> shouldEqual true
 
 [<Test>]
 let ``B3 Stats.sum pulls values proportional to length (materializing pull)`` () =
