@@ -3,9 +3,79 @@ namespace Deedle.Virtual.Sources
 open System
 open System.Globalization
 open System.IO
+open System.Text
+open FSharp.Data
 open Deedle
 open Deedle.Vectors.Virtual
 open Deedle.Virtual
+
+module internal CsvParsing =
+  /// RFC4180-ish CSV field split (quotes, escaped quotes). Does not handle embedded newlines.
+  let splitCsvLine (line: string) =
+    let acc = ResizeArray<string>()
+    let sb = StringBuilder()
+    let mutable i = 0
+    let mutable inQuotes = false
+    while i < line.Length do
+      let c = line.[i]
+      if inQuotes then
+        if c = '"' then
+          if i + 1 < line.Length && line.[i + 1] = '"' then
+            sb.Append('"') |> ignore
+            i <- i + 2
+          else
+            inQuotes <- false
+            i <- i + 1
+        else
+          sb.Append(c) |> ignore
+          i <- i + 1
+      else
+        match c with
+        | '"' ->
+            inQuotes <- true
+            i <- i + 1
+        | ',' ->
+            acc.Add(sb.ToString())
+            sb.Clear() |> ignore
+            i <- i + 1
+        | _ ->
+            sb.Append(c) |> ignore
+            i <- i + 1
+    acc.Add(sb.ToString().TrimEnd('\r', '\n'))
+    acc.ToArray()
+
+  let field (fields: string[]) (columnIndex: int) =
+    if columnIndex >= fields.Length then
+      failwithf "CsvVirtualSource: column %d missing (fields=%d)" columnIndex fields.Length
+    fields.[columnIndex].TrimEnd('\r', '\n')
+
+  let isMissingCell (s: string) =
+    let t = s.Trim()
+    String.IsNullOrEmpty t ||
+    Array.exists (fun m -> String.Equals(t, m, StringComparison.OrdinalIgnoreCase)) TextConversions.DefaultMissingValues
+
+  let tryParseInt64 (s: string) =
+    match Int64.TryParse(s.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture) with
+    | true, v -> Some v
+    | false, _ -> None
+
+  let tryParseFloat (s: string) =
+    match Double.TryParse(s.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture) with
+    | true, v -> Some v
+    | false, _ -> None
+
+  let tryParseDateTime (s: string) =
+    match DateTimeOffset.TryParse(s.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind) with
+    | true, dto -> Some dto
+    | false, _ -> None
+
+  let parseDateTimeStrict (s: string) =
+    DateTimeOffset.Parse(s.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)
+
+  let columnIndex (header: string[]) (name: string) =
+    match header |> Array.tryFindIndex (fun h -> String.Equals(h, name, StringComparison.OrdinalIgnoreCase)) with
+    | Some idx -> idx
+    | None -> failwithf "CsvVirtualSource: column '%s' not found in header" name
 
 /// Shared line index for one CSV file (built once, reused by column sources).
 type CsvLineIndex(path: string, ?skipHeader: bool) =
@@ -22,80 +92,64 @@ type CsvLineIndex(path: string, ?skipHeader: bool) =
   member _.Length = int64 lines.Length
 
   member _.ReadFields(row: int64) =
-    lines.[int row].Split(',') |> Array.map (fun s -> s.TrimEnd('\r', '\n'))
+    CsvParsing.splitCsvLine lines.[int row]
 
   member _.HeaderColumns =
     use reader = new StreamReader(path)
     match reader.ReadLine() with
     | null -> [||]
-    | line -> line.Split(',') |> Array.map (fun s -> s.Trim())
+    | line -> CsvParsing.splitCsvLine line |> Array.map (fun s -> s.Trim())
 
-module internal CsvParsing =
-  let field (fields: string[]) (columnIndex: int) =
-    if columnIndex >= fields.Length then
-      failwithf "CsvVirtualSource: column %d missing (fields=%d)" columnIndex fields.Length
-    fields.[columnIndex].TrimEnd('\r', '\n')
+module CsvVirtualSource =
+  open CsvParsing
 
-  let parseInt (s: string) = Int32.Parse(s, CultureInfo.InvariantCulture)
-  let parseInt64 (s: string) = Int64.Parse(s, CultureInfo.InvariantCulture)
-  let parseFloat (s: string) = Double.Parse(s, CultureInfo.InvariantCulture)
-  let parseString (s: string) = s
+  let private looksLikeDateTime (s: string) =
+    s.IndexOf('-') >= 0 || s.IndexOf('/') >= 0 || s.IndexOf('T') >= 0
 
-  let parseDateTime (s: string) =
-    DateTimeOffset.Parse(s, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)
-
-  let tryParseDateTime (s: string) =
-    match DateTimeOffset.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind) with
-    | true, dto -> Some dto
-    | false, _ -> None
-
-  let columnIndex (header: string[]) (name: string) =
-    match header |> Array.tryFindIndex (fun h -> String.Equals(h, name, StringComparison.OrdinalIgnoreCase)) with
-    | Some idx -> idx
-    | None -> failwithf "CsvVirtualSource: column '%s' not found in header" name
-
-  let private tryInt64 (s: string) =
-    match Int64.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture) with
-    | true, v -> Some v
-    | false, _ -> None
-
-  let private tryFloat (s: string) =
-    match Double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture) with
-    | true, v -> Some v
-    | false, _ -> None
-
-  let inferColumnKind (index: CsvLineIndex) (columnIndex: int) (sampleRows: int) =
+  let private inferColumnKind (index: CsvLineIndex) (columnIndex: int) (sampleRows: int) =
     if index.Length = 0L then "string"
     else
       let sampleCount = min sampleRows (int index.Length)
       let samples =
         [ for row in 0 .. sampleCount - 1 ->
             field (index.ReadFields(int64 row)) columnIndex ]
-      if List.forall (tryParseDateTime >> Option.isSome) samples then "datetime"
-      elif List.forall (tryInt64 >> Option.isSome) samples then "int64"
-      elif List.forall (tryFloat >> Option.isSome) samples then "float"
+        |> List.filter (not << isMissingCell)
+      if samples.IsEmpty then "string"
+      // Prefer numerics over DateTimeOffset.TryParse, which accepts bare integers like "1".
+      elif List.forall (tryParseInt64 >> Option.isSome) samples then "int64"
+      elif List.forall (tryParseFloat >> Option.isSome) samples then "float"
+      elif List.forall (fun s -> Option.isSome (tryParseDateTime s) && looksLikeDateTime s) samples then "datetime"
       else "string"
 
-module CsvVirtualSource =
-  open CsvParsing
-
-  let private createColumn (lineIndex: CsvLineIndex) columnIndex parse
+  let private createOptionalColumn (lineIndex: CsvLineIndex) columnIndex (tryParse: string -> 'T option)
       (asLong: ('T -> int64) option) (lookupRange: LookupRangeMode<'T> option) =
     let valueAt row =
-      let fields = lineIndex.ReadFields row
-      field fields columnIndex |> parse
+      let s = field (lineIndex.ReadFields row) columnIndex
+      if isMissingCell s then OptionalValue.Missing
+      else
+        match tryParse s with
+        | Some v -> OptionalValue(v)
+        | None -> OptionalValue.Missing
     OrdinalVirtualSource(lineIndex.Length, valueAt, "csv-file", ?asLong=asLong, ?lookupRange=lookupRange) :> IVirtualVectorSource
+
+  /// Index columns stay strict: empty/invalid index cells throw (row keys must be present).
+  let private createStrictColumn (lineIndex: CsvLineIndex) columnIndex (parse: string -> 'T)
+      (asLong: ('T -> int64) option) =
+    let valueAt row =
+      let s = field (lineIndex.ReadFields row) columnIndex
+      OptionalValue(parse s)
+    OrdinalVirtualSource(lineIndex.Length, valueAt, "csv-file", ?asLong=asLong) :> IVirtualVectorSource
 
   let internal createTypedColumn (lineIndex: CsvLineIndex) (columnIndex: int) (kind: string) lookupRange =
     match kind with
     | "datetime" ->
-      createColumn lineIndex columnIndex parseDateTime (Some (fun dto -> dto.UtcTicks)) None
+      createOptionalColumn lineIndex columnIndex tryParseDateTime (Some (fun dto -> dto.UtcTicks)) None
     | "int64" ->
-      createColumn lineIndex columnIndex (parseInt64 >> id) (Some id) None
+      createOptionalColumn lineIndex columnIndex tryParseInt64 (Some id) None
     | "float" ->
-      createColumn lineIndex columnIndex parseFloat None None
+      createOptionalColumn lineIndex columnIndex tryParseFloat None None
     | _ ->
-      createColumn lineIndex columnIndex parseString None lookupRange
+      createOptionalColumn lineIndex columnIndex (fun s -> Some s) None lookupRange
 
   let resolveIndexColumn (header: string[]) (options: VirtualReadCsvOptions) =
     match options.IndexColumn with
@@ -118,7 +172,7 @@ module CsvVirtualSource =
     if header.Length = 0 then invalidArg "csvPath" "CSV has no header row"
     let indexCol = resolveIndexColumn header options
     let indexSource =
-      createColumn lineIndex indexCol parseDateTime (Some (fun dto -> dto.UtcTicks)) None
+      createStrictColumn lineIndex indexCol parseDateTimeStrict (Some (fun dto -> dto.UtcTicks))
       :?> IVirtualVectorSource<DateTimeOffset>
     let valueColumnIndices =
       header
@@ -143,7 +197,7 @@ module CsvVirtualSource =
 
   let createIndexSource (lineIndex: CsvLineIndex) (columnName: string) =
     let colIdx = columnIndex lineIndex.HeaderColumns columnName
-    createColumn lineIndex colIdx parseDateTime (Some (fun dto -> dto.UtcTicks)) None
+    createStrictColumn lineIndex colIdx parseDateTimeStrict (Some (fun dto -> dto.UtcTicks))
 
   /// Create a value column source for a CSV file (type inferred from sample rows).
   let createColumnSource (lineIndex: CsvLineIndex) (columnName: string) (lookupRange: LookupRangeMode<string> option) =

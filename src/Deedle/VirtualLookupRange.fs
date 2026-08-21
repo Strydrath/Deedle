@@ -34,10 +34,14 @@ type LookupRangeMode<'T> =
 [<RequireQualifiedAccess>]
 module VirtualLookupRange =
   /// Step LookupRange for values repeating on a fixed cycle (B4/B5/B6 ideal case).
+  /// Unknown values yield an empty range (negative offset) instead of throwing.
   let forRepeatingCycle (values: 'T[]) =
-    LookupRangeStep (fun v -> values |> Array.findIndex ((=) v), values.Length)
+    LookupRangeStep (fun v ->
+      match values |> Array.tryFindIndex ((=) v) with
+      | Some i -> i, values.Length
+      | None -> -1, max 1 values.Length)
 
-  /// IndexList LookupRange from a pre-built map of value → row indices.
+  /// IndexList LookupRange from a pre-built map of value â†’ row indices.
   let forCategorical (indicesByValue: Map<'T, int64 list>) =
     LookupRangeIndexList (fun v ->
       match indicesByValue.TryGetValue v with
@@ -52,7 +56,7 @@ module VirtualLookupRange =
     |> Map.ofList
     |> forCategorical
 
-  /// Correct but O(N) per filter — scans all rows when LookupRange is invoked.
+  /// Correct but O(N) per filter - scans all rows when LookupRange is invoked.
   let scan (length: int64) (valueAt: int64 -> 'T) =
     LookupRangeIndexList (fun v ->
       [ for i in 0L .. length - 1L do if valueAt i = v then i ])
@@ -65,6 +69,16 @@ module VirtualLookupRange =
 module LookupRangeExecutor =
   open Deedle.Internal
 
+  let private emptyAddressRange () =
+    let addrs: Address list = []
+    ({ new IRangeRestriction<Address> with
+        member _.Count = 0L
+       interface seq<Address> with
+         member _.GetEnumerator() = (addrs :> seq<_>).GetEnumerator()
+       interface System.Collections.IEnumerable with
+         member _.GetEnumerator() = (addrs :> seq<_>).GetEnumerator() :> System.Collections.IEnumerator }
+     |> RangeRestriction.Custom)
+
   let lookupRange (length: int64) (mode: LookupRangeMode<'T>) (value: 'T) (context: string) =
     match mode with
     | LookupRangeUnsupported -> failwithf "LookupRange: not configured on %s" context
@@ -73,19 +87,22 @@ module LookupRangeExecutor =
         RangeRestriction.Fixed(Address.ofInt64 lo, Address.ofInt64 hi)
     | LookupRangeStep f ->
         let offset, step = f value
-        RangeRestriction.Custom { Offset = offset; Step = step }
+        if offset < 0 || step <= 0 then emptyAddressRange ()
+        else RangeRestriction.Custom { Offset = offset; Step = step }
     | LookupRangeFullFixed ->
         RangeRestriction.Fixed(Address.ofInt64 0L, Address.ofInt64(length - 1L))
     | LookupRangeIndexList f ->
         let addrs = f value |> List.map Address.ofInt64
         let count = int64 addrs.Length
-        ({ new IRangeRestriction<Address> with
-            member _.Count = count
-           interface seq<Address> with
-             member _.GetEnumerator() = (addrs :> seq<_>).GetEnumerator()
-           interface System.Collections.IEnumerable with
-             member _.GetEnumerator() = (addrs :> seq<_>).GetEnumerator() :> System.Collections.IEnumerator }
-         |> RangeRestriction.Custom)
+        if count = 0L then emptyAddressRange ()
+        else
+          ({ new IRangeRestriction<Address> with
+              member _.Count = count
+             interface seq<Address> with
+               member _.GetEnumerator() = (addrs :> seq<_>).GetEnumerator()
+             interface System.Collections.IEnumerable with
+               member _.GetEnumerator() = (addrs :> seq<_>).GetEnumerator() :> System.Collections.IEnumerator }
+           |> RangeRestriction.Custom)
 
   let clipLookupRange (mode: LookupRangeMode<'T>) (lo: int64) (newLen: int64) =
     match mode with
@@ -98,29 +115,28 @@ module LookupRangeExecutor =
     | LookupRangeFullFixed -> LookupRangeFullFixed
     | LookupRangeIndexList f -> LookupRangeIndexList f
 
+  /// Sub-vector plan: callers compose `valueAt << MapRow` so OptionalValue sources stay typed.
   type SubVectorSpec<'T> =
     { Length: int64
-      ValueAt: int64 -> 'T
+      MapRow: int64 -> int64
       AsLong: ('T -> int64) option
       LookupRange: LookupRangeMode<'T> }
 
-  let getSubVector (length: int64) (valueAt: int64 -> 'T) (mode: LookupRangeMode<'T>) (asLong: ('T -> int64) option) (range: RangeRestriction<Address>) =
+  let getSubVector (length: int64) (mode: LookupRangeMode<'T>) (asLong: ('T -> int64) option) (range: RangeRestriction<Address>) =
     match range.AsAbsolute(length) with
     | Choice1Of2(nlo, nhi) ->
         let lo = Address.asInt64 nlo
         let hi = Address.asInt64 nhi
         if hi < lo then invalidOp "GetSubVector: hi < lo"
         let newLen = hi - lo + 1L
-        let subValueAt i = valueAt (lo + i)
         Choice1Of2
           { Length = newLen
-            ValueAt = subValueAt
+            MapRow = fun i -> lo + i
             AsLong = asLong
             LookupRange = clipLookupRange mode lo newLen }
     | Choice2Of2(:? StepRange as lr) ->
-        let subValueAt i = valueAt (int64 lr.Offset + int64 lr.Step * i)
         let count =
-          if length = 0L then 0L
+          if length = 0L || lr.Offset < 0 || lr.Step <= 0 then 0L
           else
             let span = length
             let baseCount = span / int64 lr.Step
@@ -128,14 +144,13 @@ module LookupRangeExecutor =
         let newLen = max 0L count
         Choice1Of2
           { Length = newLen
-            ValueAt = subValueAt
+            MapRow = fun i -> int64 lr.Offset + int64 lr.Step * i
             AsLong = asLong
             LookupRange = mode }
     | Choice2Of2 ar ->
         let addrs = ar |> Seq.map Address.asInt64 |> List.ofSeq
-        let subValueAt i = valueAt addrs.[int i]
         Choice1Of2
           { Length = int64 addrs.Length
-            ValueAt = subValueAt
+            MapRow = fun i -> addrs.[int i]
             AsLong = asLong
             LookupRange = mode }

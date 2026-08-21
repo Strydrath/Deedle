@@ -1,4 +1,4 @@
-﻿namespace Deedle.Virtual
+namespace Deedle.Virtual
 
 // ------------------------------------------------------------------------------------------------
 // Helpers that can be used when implementing Lookup in your own Deedle sources
@@ -147,7 +147,7 @@ type Virtual private () =
 /// Ordinal pull-on-read virtual source with optional LookupRange semantics.
 type OrdinalVirtualSource<'T>
     ( length: int64,
-      valueAt: int64 -> 'T,
+      valueAt: int64 -> OptionalValue<'T>,
       schemeId: string,
       ?asLong: 'T -> int64,
       ?lookupRange: LookupRangeMode<'T> ) =
@@ -157,7 +157,8 @@ type OrdinalVirtualSource<'T>
   let context = sprintf "OrdinalVirtualSource<%s>" (typeof<'T>.Name)
 
   let rec createFromSpec (spec: LookupRangeExecutor.SubVectorSpec<'T>) =
-    OrdinalVirtualSource<'T>(spec.Length, spec.ValueAt, schemeId, ?asLong=spec.AsLong, lookupRange=spec.LookupRange) :> IVirtualVectorSource<'T>
+    let subValueAt i = valueAt (spec.MapRow i)
+    OrdinalVirtualSource<'T>(spec.Length, subValueAt, schemeId, ?asLong=spec.AsLong, lookupRange=spec.LookupRange) :> IVirtualVectorSource<'T>
 
   interface IVirtualVectorSource with
     member this.Length = length
@@ -191,15 +192,25 @@ type OrdinalVirtualSource<'T>
         match asLong with
         | Some g -> g
         | None -> failwith "LookupValue: asLong not configured"
-      let c = Func<int64, bool>(fun i -> check.Invoke(Address.ofInt64 i))
-      IndexUtilsModule.binarySearch length (Func<_, _>(fun i -> asLongFn (valueAt i))) (asLongFn k) l c
-      |> OptionalValue.map (fun i -> valueAt i, Address.ofInt64 i)
+      let longAt i =
+        match valueAt i with
+        | OptionalValue.Present v -> asLongFn v
+        | OptionalValue.Missing -> Int64.MinValue
+      let c = Func<int64, bool>(fun i ->
+        match valueAt i with
+        | OptionalValue.Present _ -> check.Invoke(Address.ofInt64 i)
+        | OptionalValue.Missing -> false)
+      IndexUtilsModule.binarySearch length (Func<_, _>(fun i -> longAt i)) (asLongFn k) l c
+      |> OptionalValue.bind (fun i ->
+          match valueAt i with
+          | OptionalValue.Present v -> OptionalValue((v, Address.ofInt64 i))
+          | OptionalValue.Missing -> OptionalValue.Missing)
 
     member _.ValueAt(loc) =
-      OptionalValue(valueAt (Address.asInt64 loc.Address))
+      valueAt (Address.asInt64 loc.Address)
 
     member _.GetSubVector(range) =
-      match LookupRangeExecutor.getSubVector length valueAt lookupRangeMode asLong range with
+      match LookupRangeExecutor.getSubVector length lookupRangeMode asLong range with
       | Choice1Of2 spec -> createFromSpec spec
       | Choice2Of2 _ -> invalidOp "GetSubVector: unexpected result"
 

@@ -4,8 +4,8 @@
 
 ### New operations
 
-- **`Virtual.ReadCsv`**: load a CSV file as a virtual `Frame` with an ordered index column (auto-detects `Timestamp` / `DateTime` when present).
-- **`VirtualLookupRange` helpers**: `forRepeatingCycle`, `forCategorical`, `forCategoricalScan`, and `scan` for configuring searchable string columns on virtual sources.
+- **`Virtual.ReadCsv`**: load a CSV file as a virtual `Frame` with an ordered index column (auto-detects `Timestamp` / `DateTime` when present). Empty / `NA`-style cells become missing values; quoted fields with commas are supported.
+- **`VirtualLookupRange` helpers**: `forRepeatingCycle`, `forCategorical`, `forCategoricalScan`, and `scan` for configuring searchable string columns on virtual sources. Unknown cycle values yield an empty filter range (no throw).
 - **CSV virtual backend** (`Deedle.Virtual.Sources`): `CsvLineIndex`, `CsvVirtualSource`, and `CsvTestData` helpers for file-backed Big Deedle experiments.
 
 ### Bug fixes
