@@ -120,3 +120,53 @@ let ``B13 Parquet null floats stay missing not NaN`` () =
     Stats.sum series |> shouldEqual 4.0
   finally
     if File.Exists path then File.Delete path
+
+[<Test>]
+let ``B13 Virtual.ReadParquet supports all Parquet.fs column CLR types`` () =
+  let path = Path.Combine(Path.GetTempPath(), sprintf "deedle-b13-alltypes-%d.parquet" Environment.TickCount)
+  try
+    let t0 = DateTime(2020, 1, 1, 12, 0, 0, DateTimeKind.Utc)
+    let t1 = DateTime(2020, 1, 2, 12, 0, 0, DateTimeKind.Utc)
+    // Write with Frame.writeParquet so schema CLR types match materialized Parquet.fs.
+    let df =
+      Frame.ofColumns [
+        "Timestamp" => (Series.ofValues [ t0; t1 ] :> ISeries<_>)
+        "F64"  => (Series.ofOptionalObservations [ (0, Some 1.5); (1, None) ] :> ISeries<_>)
+        "F32"  => (Series.ofValues [ 1.0f; 2.5f ] :> ISeries<_>)
+        "I32"  => (Series.ofValues [ 10; 20 ] :> ISeries<_>)
+        "I64"  => (Series.ofValues [ 100L; 200L ] :> ISeries<_>)
+        "I16"  => (Series.ofValues [ 1s; -2s ] :> ISeries<_>)
+        "U8"   => (Series.ofValues [ 1uy; 255uy ] :> ISeries<_>)
+        "U16"  => (Series.ofValues [ 1us; 1000us ] :> ISeries<_>)
+        "U32"  => (Series.ofValues [ 1u; 100000u ] :> ISeries<_>)
+        "U64"  => (Series.ofValues [ 1UL; 123456789UL ] :> ISeries<_>)
+        "Flag" => (Series.ofValues [ true; false ] :> ISeries<_>)
+        "Name" => (Series.ofValues [ "alpha"; "beta" ] :> ISeries<_>)
+        "When" => (Series.ofValues [ t0; t1 ] :> ISeries<_>) ]
+    Frame.writeParquet path df
+    let keys =
+      [ "F64"; "F32"; "I32"; "I64"; "I16"; "U8"; "U16"; "U32"; "U64"; "Flag"; "Name"; "When" ]
+    let frame = Virtual.ReadParquet(path, indexColumn = "Timestamp", columnKeys = keys)
+    frame.RowCount |> shouldEqual 2
+    frame.RowIndex.Keys |> Seq.map (fun dto -> dto.UtcDateTime) |> Seq.toList
+    |> shouldEqual [ t0; t1 ]
+
+    let f64 = frame.GetColumn<float>("F64")
+    f64.TryGetAt(0).Value |> shouldEqual 1.5
+    f64.TryGetAt(1).HasValue |> shouldEqual false
+    frame.GetColumn<float32>("F32").Values |> Seq.toList |> shouldEqual [ 1.0f; 2.5f ]
+    frame.GetColumn<int>("I32").Values |> Seq.toList |> shouldEqual [ 10; 20 ]
+    frame.GetColumn<int64>("I64").Values |> Seq.toList |> shouldEqual [ 100L; 200L ]
+    frame.GetColumn<int16>("I16").Values |> Seq.toList |> shouldEqual [ 1s; -2s ]
+    frame.GetColumn<byte>("U8").Values |> Seq.toList |> shouldEqual [ 1uy; 255uy ]
+    frame.GetColumn<uint16>("U16").Values |> Seq.toList |> shouldEqual [ 1us; 1000us ]
+    frame.GetColumn<uint32>("U32").Values |> Seq.toList |> shouldEqual [ 1u; 100000u ]
+    frame.GetColumn<uint64>("U64").Values |> Seq.toList |> shouldEqual [ 1UL; 123456789UL ]
+    frame.GetColumn<bool>("Flag").Values |> Seq.toList |> shouldEqual [ true; false ]
+    frame.GetColumn<string>("Name").Values |> Seq.toList |> shouldEqual [ "alpha"; "beta" ]
+    let whenCol = frame.GetColumn<DateTime>("When").Values |> Seq.toList
+    abs((whenCol.[0] - t0).TotalSeconds) |> should be (lessThan 1.0)
+    abs((whenCol.[1] - t1).TotalSeconds) |> should be (lessThan 1.0)
+  finally
+    if File.Exists path then
+      try File.Delete path with _ -> ()
