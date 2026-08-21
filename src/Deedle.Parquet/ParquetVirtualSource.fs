@@ -44,18 +44,23 @@ module private OptionalArrays =
     s
 
 /// Shared Parquet file handle: schema, row count, and lazily loaded column arrays.
+/// Column sources capture this instance so the file stays open for the virtual frame lifetime;
+/// dispose explicitly only for short-lived validation helpers.
 type ParquetFileIndex(path: string) =
   let stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read)
   let reader = global.Parquet.ParquetReader.CreateAsync(stream).GetAwaiter().GetResult()
   let dataFields = reader.Schema.GetDataFields()
+  let mutable disposed = false
   // Prefer metadata NumRows — never ReadEntireRowGroup just to count.
   let rowCount =
     if reader.Metadata <> null && reader.Metadata.NumRows > 0L then reader.Metadata.NumRows
     elif reader.RowGroupCount = 0 then 0L
     else
-      [| for rgIdx in 0 .. reader.RowGroupCount - 1 ->
-           int64 (reader.OpenRowGroupReader(rgIdx).RowCount) |]
-      |> Array.sum
+      let mutable total = 0L
+      for rgIdx in 0 .. reader.RowGroupCount - 1 do
+        use rgReader = reader.OpenRowGroupReader(rgIdx)
+        total <- total + int64 rgReader.RowCount
+      total
   let columnCache = ConcurrentDictionary<string, obj>()
 
   member _.Path = path
@@ -69,9 +74,10 @@ type ParquetFileIndex(path: string) =
 
   /// Read only the named column from each row group (not the entire row group).
   member private this.ReadColumn (name: string) =
+    if disposed then invalidOp "ParquetFileIndex: disposed"
     let field = dataFields.[this.FieldIndex name]
     [| for rgIdx in 0 .. reader.RowGroupCount - 1 do
-         let rgReader = reader.OpenRowGroupReader(rgIdx)
+         use rgReader = reader.OpenRowGroupReader(rgIdx)
          yield rgReader.ReadColumnAsync(field).GetAwaiter().GetResult() |]
 
   member private this.ReadColumnValues (name: string) =
@@ -147,39 +153,46 @@ type ParquetFileIndex(path: string) =
 
   interface IDisposable with
     member _.Dispose() =
-      (reader :> IDisposable).Dispose()
-      stream.Dispose()
+      if not disposed then
+        disposed <- true
+        (reader :> IDisposable).Dispose()
+        stream.Dispose()
 
 module internal ParquetColumnSource =
+  /// Capture `index` in the value closure so the file handle outlives frame construction.
   let private optionalSource
-      (length: int64)
+      (index: ParquetFileIndex)
       (data: OptionalValue<'T>[])
       (schemeId: string)
       (asLong: ('T -> int64) option)
       (lookupRange: LookupRangeMode<'T>) =
     OrdinalVirtualSource(
-      length, (fun row -> data.[int row]), schemeId,
+      index.Length,
+      (fun row ->
+        GC.KeepAlive(index)
+        data.[int row]),
+      schemeId,
       ?asLong=asLong, lookupRange=lookupRange)
     :> IVirtualVectorSource
 
   let createFloat (index: ParquetFileIndex) (name: string) (lookupRange: LookupRangeMode<float> option) =
     let data = index.ReadFloatColumn name
     let lr = defaultArg lookupRange LookupRangeUnsupported
-    optionalSource index.Length data "parquet-file" None lr
+    optionalSource index data "parquet-file" None lr
 
   let createInt64 (index: ParquetFileIndex) (name: string) (lookupRange: LookupRangeMode<int64> option) =
     let data = index.ReadInt64Column name
     let lr = defaultArg lookupRange LookupRangeUnsupported
-    optionalSource index.Length data "parquet-file" (Some id) lr
+    optionalSource index data "parquet-file" (Some id) lr
 
   let createDateTimeOffset (index: ParquetFileIndex) (name: string) =
     let data = index.ReadDateTimeOffsetColumn name
-    optionalSource index.Length data "parquet-file" (Some (fun dto -> dto.UtcTicks)) LookupRangeUnsupported
+    optionalSource index data "parquet-file" (Some (fun dto -> dto.UtcTicks)) LookupRangeUnsupported
 
   let createString (index: ParquetFileIndex) (name: string) (lookupRange: LookupRangeMode<string> option) =
     let data = index.ReadStringColumn name
     let lr = defaultArg lookupRange LookupRangeUnsupported
-    optionalSource index.Length data "parquet-file" None lr
+    optionalSource index data "parquet-file" None lr
 
   let resolveIndexColumn (fields: DataField[]) (options: VirtualReadParquetOptions) =
     match options.IndexColumn with
@@ -223,7 +236,9 @@ module ParquetVirtualSource =
 
   let createFrame (parquetPath: string) (options: VirtualReadParquetOptions) =
     if not (File.Exists parquetPath) then failwithf "ParquetVirtualSource: file not found '%s'" parquetPath
-    use fileIndex = new ParquetFileIndex(parquetPath)
+    // Do not dispose: column sources keep `fileIndex` alive for the frame lifetime
+    // (cached arrays today; cache fills still need a live reader).
+    let fileIndex = new ParquetFileIndex(parquetPath)
     if fileIndex.Length = 0L then invalidArg "parquetPath" "Parquet file has no data rows"
     let fields = fileIndex.DataFields
     if fields.Length = 0 then invalidArg "parquetPath" "Parquet file has no columns"
@@ -258,11 +273,16 @@ module ParquetTestData =
   let defaultDatasetName = "b6-search-100k-random.parquet"
 
   let createFloatValueSeries (parquetPath: string) =
-    use fileIndex = new ParquetFileIndex(parquetPath)
+    // Keep index alive via the value closure (same lifetime rule as Virtual.ReadParquet).
+    let fileIndex = new ParquetFileIndex(parquetPath)
     let data = fileIndex.ReadFloatColumn "Value"
     let src =
       OrdinalVirtualSource(
-        fileIndex.Length, (fun row -> data.[int row]), "parquet-file")
+        fileIndex.Length,
+        (fun row ->
+          GC.KeepAlive(fileIndex)
+          data.[int row]),
+        "parquet-file")
       :> IVirtualVectorSource<float>
     Virtual.CreateOrdinalSeries(src)
 
@@ -276,24 +296,22 @@ module ParquetTestData =
     with _ -> false
 
   let private writeTypedSearchParquet (parquetPath: string) (csvPath: string) =
-    // Stream CSV lines into typed Parquet columns (schema CLR types drive Virtual.ReadParquet).
+    // Stream CSV fields into typed Parquet columns (schema CLR types drive Virtual.ReadParquet).
     // Parquet.Net rejects DateTimeOffset fields — store UTC DateTime and convert on read.
+    // Use CsvLineIndex so quoted commas match Virtual.ReadCsv parsing.
     let idAcc = ResizeArray<Nullable<int64>>()
     let tsAcc = ResizeArray<Nullable<DateTime>>()
     let catAcc = ResizeArray<string>()
     let valAcc = ResizeArray<Nullable<float>>()
-    use reader = new StreamReader(csvPath)
-    reader.ReadLine() |> ignore // header
-    let mutable line = reader.ReadLine()
-    while not (isNull line) do
-      let parts = line.Split(',')
+    let lineIndex = Deedle.Virtual.Sources.CsvLineIndex(csvPath)
+    for row in 0L .. lineIndex.Length - 1L do
+      let parts = lineIndex.ReadFields(row)
       idAcc.Add(Nullable(Int64.Parse(parts.[0], CultureInfo.InvariantCulture)))
       let dto =
         DateTimeOffset.Parse(parts.[1], CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)
       tsAcc.Add(Nullable(dto.UtcDateTime))
       catAcc.Add(parts.[2])
-      valAcc.Add(Nullable(Double.Parse(parts.[3].TrimEnd('\r', '\n'), CultureInfo.InvariantCulture)))
-      line <- reader.ReadLine()
+      valAcc.Add(Nullable(Double.Parse(parts.[3], CultureInfo.InvariantCulture)))
     let schema = ParquetSchema([|
       DataField("Id", typeof<Nullable<int64>>) :> Field
       DataField("Timestamp", typeof<Nullable<DateTime>>) :> Field
@@ -326,7 +344,8 @@ module ParquetTestData =
 module VirtualParquetExtensions =
   type Deedle.Virtual.Virtual with
     /// Load a Parquet file as a virtual frame with an ordered row index.
-    /// Selected columns are materialized on first access and cached in memory.
+    /// Requested columns are read into memory and cached; the underlying file handle
+    /// stays reachable for the lifetime of the returned frame.
     static member ReadParquet(path: string, ?indexColumn: string, ?searchColumn: string, ?searchLookupRange: LookupRangeMode<string>, ?columnKeys: string list) =
       let searchCol =
         match searchColumn with

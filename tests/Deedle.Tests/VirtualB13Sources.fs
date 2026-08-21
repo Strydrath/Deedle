@@ -103,14 +103,19 @@ let ``B13 Parquet null floats stay missing not NaN`` () =
       use rg = writer.CreateRowGroup()
       let data = [| Nullable(1.0); Nullable(); Nullable(3.0) |]
       rg.WriteColumnAsync(Parquet.Data.DataColumn(fields.[0], data)).GetAwaiter().GetResult()
-    use idx = new ParquetFileIndex(path)
-    let values = idx.ReadFloatColumn "Value"
+    // Load column, then dispose the index before series use so the temp file can be deleted.
+    let values =
+      use idx = new ParquetFileIndex(path)
+      idx.ReadFloatColumn "Value"
     values.Length |> shouldEqual 3
     values.[0].HasValue |> shouldEqual true
     values.[0].Value |> shouldEqual 1.0
     values.[1].HasValue |> shouldEqual false
     values.[2].HasValue |> shouldEqual true
-    let series = ParquetTestData.createFloatValueSeries path
+    let series =
+      Virtual.CreateOrdinalSeries(
+        OrdinalVirtualSource(int64 values.Length, (fun i -> values.[int i]), "parquet-file")
+        :> IVirtualVectorSource<float>)
     series.Values |> Seq.toList |> shouldEqual [ 1.0; 3.0 ]
     Stats.sum series |> shouldEqual 4.0
   finally
