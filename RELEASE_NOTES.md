@@ -18,7 +18,7 @@
 ### Performance
 
 - **CSV row decode cache (B13):** `CsvLineIndex` now caches parsed fields per row, so multiple columns reading the same row only split the CSV line once. Slice-scoped parsing restricts decode work to the requested `LookupRange`.
-- **`Virtual.ReadParquet` (B13):** new API in `Deedle.Parquet` that loads a Parquet file as a virtual `Frame`. Requested columns are cached in memory; the file handle stays reachable for the frame lifetime. Supports float, int64, DateTimeOffset, and string columns from Parquet schema types. Nulls map to missing values.
+- **`Virtual.ReadParquet` (B13):** new API in `Deedle.Parquet` that loads a Parquet file as a virtual `Frame`. Requested columns are cached in memory; the file handle stays reachable for the frame lifetime. Column CLR types match `Frame.readParquet` (float/float32, signed/unsigned integers, bool, string, DateTime/DateTimeOffset). Nulls map to missing values.
 
 ### Bug fixes
 
