@@ -87,12 +87,32 @@ type CsvLineIndex(path: string, ?skipHeader: bool) =
     while not reader.EndOfStream do
       acc.Add(reader.ReadLine())
     acc.ToArray()
+  let fieldCache : string[][] = Array.create lines.Length null
+  let cacheLock = obj()
+  let mutable splitCount = 0
 
   member _.Path = path
   member _.Length = int64 lines.Length
+  /// Number of CSV rows split since construction or last [`ResetSplitCount`].
+  member _.SplitCount = splitCount
+  /// Reset [`SplitCount`] (for tests and diagnostics).
+  member _.ResetSplitCount() = splitCount <- 0
 
   member _.ReadFields(row: int64) =
-    CsvParsing.splitCsvLine lines.[int row]
+    let i = int row
+    if i < 0 || i >= fieldCache.Length then
+      invalidArg "row" (sprintf "CsvLineIndex: row %d out of range [0, %d)" row fieldCache.Length)
+    match fieldCache.[i] with
+    | null ->
+        lock cacheLock (fun () ->
+          match fieldCache.[i] with
+          | null ->
+              splitCount <- splitCount + 1
+              let fields = CsvParsing.splitCsvLine lines.[i]
+              fieldCache.[i] <- fields
+              fields
+          | fields -> fields)
+    | fields -> fields
 
   member _.HeaderColumns =
     use reader = new StreamReader(path)

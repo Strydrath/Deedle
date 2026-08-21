@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <Compile Include="Parquet.fs" />
+    <Compile Include="ParquetVirtualSource.fs" />
     <None Include="paket.references" />
   </ItemGroup>
 

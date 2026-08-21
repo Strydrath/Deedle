@@ -13,6 +13,11 @@
 - **Virtual ordinal Join / Zip** of identical key ranges (and inner zip of overlapping single-block ordinal slices) keep a virtual row index. Mismatched keys, `joinOn`, and nearest-key lookup still materialize.
 - **Virtual `Series.dropMissing`**: one presence scan, then a virtual sub-vector. `Series.sortByKey` is a no-op on already-ordered virtual series. `Series.sortBy` / `groupBy` / full-series Stats / `Series.intersect` (key+value) remain documented materialize.
 
+### Performance
+
+- **CSV row decode cache (B13):** `CsvLineIndex` now caches parsed fields per row, so multiple columns reading the same row only split the CSV line once. Slice-scoped parsing restricts decode work to the requested `LookupRange`.
+- **`Virtual.ReadParquet` (B13):** new API in `Deedle.Parquet` that loads a Parquet file as a virtual `Frame`. Requested columns are cached in memory; the file handle stays reachable for the frame lifetime. Column CLR types match `Frame.readParquet` (float/float32, signed/unsigned integers, bool, string, DateTime/DateTimeOffset). Nulls map to missing values.
+
 ### Bug fixes
 
 - **Virtual wrappers (B10):** boxed / combined / mapped / row-reader sources no longer `failwith` on `LookupRange` / `LookupValue` — they delegate or scan. Partitioned `Ranges` sources accept custom LookupRange results. `Series.fillMissing` / `fillMissingWith` stay virtual. `VirtualVectorBuilder.AsyncBuild` with a virtual scheme raises `NotSupportedException` (use `Series.Materialize` / `AsyncMaterialize`).
