@@ -28,6 +28,7 @@
     <Compile Include="VirtualWrappers.fs" />
     <Compile Include="VirtualOps.fs" />
     <Compile Include="VirtualLookupRange.fs" />
+    <Compile Include="VirtualGuardrails.fs" />
     <Compile Include="VirtualRealSources.fs" />
     <Compile Include="VirtualB13Sources.fs" />
     <Compile Include="VirtualFrame.fs" />

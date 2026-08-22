@@ -93,10 +93,9 @@ type VirtualBenchmarks() =
     member _.FilterRowsBy_OrderedFullFixed() =
         orderedFullFixedFrame |> Frame.filterRowsBy "S2" searchValue |> ignore
 
-    /// Ordinal index — linear Search fallback (full column scan). Very slow at N=100k; category B5-slow.
+    /// Ordinal index + Step LookupRange on search column — same fast path as ordered (B14 fix).
     [<Benchmark>]
-    [<BenchmarkCategory("B5-slow")>]
-    member _.FilterRowsBy_OrdinalLinear() =
+    member _.FilterRowsBy_OrdinalStep() =
         ordinalFrame |> Frame.filterRowsBy "S2" searchValue |> ignore
 
     /// Sparse matches via IndexList LookupRange.

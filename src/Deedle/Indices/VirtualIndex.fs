@@ -20,6 +20,7 @@ open Deedle.Internal
 open Deedle.Vectors
 open Deedle.VectorHelpers
 open Deedle.Vectors.Virtual
+open Deedle.Virtual
 open System.Collections.Generic
 open System.Collections.ObjectModel
 
@@ -140,6 +141,36 @@ and VirtualOrdinalIndex(ranges:Ranges<int64>, source:IVirtualVectorSource) =
 /// we materialize, the vector builder also has to materialize).
 and VirtualIndexBuilder() =
   let baseBuilder = IndexBuilder.Instance
+
+  /// Map address `LookupRange` to ordinal keys for `Ranges.restrictRanges`.
+  /// `StepRange` cannot enumerate — expand strided matches without scanning all rows.
+  let mappingToOrdinalKeyRestriction (ordIndex: VirtualOrdinalIndex) (mapping: RangeRestriction<Address>) =
+    let length = ordIndex.Source.Length
+    let keyFromOffset (offset: int64) = Ranges.keyAtOffset offset ordIndex.Ranges
+    let keyAtAddr (addr: Address) =
+      keyFromOffset (ordIndex.Source.AddressOperations.OffsetOf(addr))
+    let customInt64Keys (keys: seq<int64>) =
+      let arr = keys |> Seq.toArray
+      ({ new IRangeRestriction<int64> with
+          member _.Count = int64 arr.Length
+         interface seq<int64> with
+           member _.GetEnumerator() = (arr :> seq<_>).GetEnumerator()
+         interface System.Collections.IEnumerable with
+           member _.GetEnumerator() = (arr :> seq<_>).GetEnumerator() :> _ }
+       |> RangeRestriction.Custom)
+    match mapping with
+    | RangeRestriction.Custom custom ->
+        match custom with
+        | :? StepRange as sr ->
+            customInt64Keys (seq {
+              if sr.Step > 0 && sr.Offset >= 0 then
+                let mutable i = int64 sr.Offset
+                while i < length do
+                  yield keyFromOffset i
+                  i <- i + int64 sr.Step
+            })
+        | _ -> RangeRestriction.map keyAtAddr mapping
+    | _ -> RangeRestriction.map keyAtAddr mapping
 
   /// Create linear index from the keys of a given index
   let materializeIndex (index:IIndex<'T>) =
@@ -328,6 +359,32 @@ and VirtualIndexBuilder() =
           let mapping = searchVector.Source.LookupRange(searchValue)
           let newIndex = VirtualOrderedIndex(index.Source.GetSubVector(mapping))
           newIndex :> _, GetRange(vector, mapping)
+
+      | (:? VirtualOrdinalIndex as ordIndex), (:? VirtualVector<'V> as searchVector) ->
+          let mapping = searchVector.Source.LookupRange(searchValue)
+          let newIndex =
+            { new IVirtualVectorSourceOperation<_> with
+                member x.Invoke(source) =
+                  let sub = source.GetSubVector(mapping)
+                  // Single contiguous block + strided/fixed LookupRange: compact keys 0..k-1
+                  // (avoid 12k+ singleton ranges when strided keys are not consecutive).
+                  match ordIndex.Ranges.Ranges with
+                  | [| (0L, hi) |] when hi = ordIndex.Source.Length - 1L ->
+                      match mapping with
+                      | RangeRestriction.Custom (:? StepRange as _)
+                      | RangeRestriction.Fixed _ ->
+                          VirtualOrdinalIndex(Ranges.inlineCreate (+) [0L, sub.Length - 1L], sub)
+                      | _ ->
+                          let ordinalRestr = mappingToOrdinalKeyRestriction ordIndex mapping
+                          let newRanges = Ranges.restrictRanges ordinalRestr ordIndex.Ranges
+                          VirtualOrdinalIndex(newRanges, sub)
+                  | _ ->
+                      let ordinalRestr = mappingToOrdinalKeyRestriction ordIndex mapping
+                      let newRanges = Ranges.restrictRanges ordinalRestr ordIndex.Ranges
+                      VirtualOrdinalIndex(newRanges, sub) }
+            |> ordIndex.Source.Invoke
+          unbox<IIndex<'K>> newIndex, GetRange(vector, mapping)
+
       | _ ->
           baseBuilder.Search((index, vector), searchVector, searchValue)
 
