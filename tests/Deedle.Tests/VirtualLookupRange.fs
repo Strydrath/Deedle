@@ -119,7 +119,7 @@ module B4ProfileReport =
         frame |> Frame.filterRowsBy "S2" B4.searchValue |> ignore)
     let filtered, filterDelta, readDelta = B4.filterAndReadOrdinal frame c readN
     { Profile = "Default 8-word (ordinal index)"
-      LookupRange = "Unsupported (linear Search)"
+      LookupRange = "Step (Custom stride)"
       N = n
       Search = B4.searchValue
       VirtualFilter = FrameProbe.rowIndexIsVirtual filtered
@@ -279,12 +279,12 @@ let ``B4 FullFixed LookupRange is virtual but retains entire series (naive)`` ()
   filtered.RowCount |> shouldEqual (int B4.nLarge)
 
 [<Test>]
-let ``B4 Ordinal frame filter scans all rows (linear Search fallback)`` () =
+let ``B4 Ordinal frame filter uses LookupRange like ordered index`` () =
   let c, frame, words = InstrumentedOrdinalSource.createOrdinalSearchFrame B4.nLarge
   let filtered, filterDelta, _ = B4.filterAndReadOrdinal frame c 0
-  filterDelta.LookupRangeCount |> shouldEqual 0
-  filterDelta.ValueAtCount |> should be (greaterThanOrEqualTo (int B4.nLarge))
-  FrameProbe.rowIndexIsVirtual filtered |> shouldEqual false
+  filterDelta.LookupRangeCount |> shouldEqual 1
+  filterDelta.ValueAtCount |> shouldEqual 0
+  FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
   filtered.RowCount |> shouldEqual (B4.expectedMatchCount B4.nLarge words.Length)
 
 [<Test>]
@@ -318,32 +318,32 @@ let ``B4 Mapped search column without reverse lookup scans at filter time`` () =
   filtered.RowCount |> shouldEqual (B4.expectedMatchCount B4.nLarge words.Length)
 
 [<Test>]
-let ``B4 Step filter is faster than ordinal linear scan on large frame`` () =
-  let virtualMs =
+let ``B4 Ordinal Step filter is same order of magnitude as ordered Step filter`` () =
+  let orderedMs =
     B4.elapsedMs (fun () ->
       let c, frame, _ = InstrumentedOrdinalSource.createOrderedSearchFrame B4.nTiming
       c.Reset()
       frame |> Frame.filterRowsBy "S2" B4.searchValue |> ignore)
-  let linearMs =
+  let ordinalMs =
     B4.elapsedMs (fun () ->
       let c, frame, _ = InstrumentedOrdinalSource.createOrdinalSearchFrame B4.nTiming
       c.Reset()
       frame |> Frame.filterRowsBy "S2" B4.searchValue |> ignore)
-  virtualMs |> should be (lessThan (linearMs * 0.5))
+  ordinalMs |> should be (lessThan (max 50.0 (orderedMs * 5.0)))
 
 [<Test>]
-let ``B4 Step filter plus partial read is faster than linear scan`` () =
-  let virtualMs =
+let ``B4 Ordinal Step filter plus partial read matches ordered cost order`` () =
+  let orderedMs =
     B4.elapsedMs (fun () ->
       let c, frame, _ = InstrumentedOrdinalSource.createOrderedSearchFrame B4.nTiming
       let filtered, _, _ = B4.filterAndRead frame c 50
       filtered.RowCount |> ignore)
-  let linearMs =
+  let ordinalMs =
     B4.elapsedMs (fun () ->
       let c, frame, _ = InstrumentedOrdinalSource.createOrdinalSearchFrame B4.nTiming
       let filtered, _, _ = B4.filterAndReadOrdinal frame c 50
       filtered.RowCount |> ignore)
-  virtualMs |> should be (lessThan (linearMs * 0.5))
+  ordinalMs |> should be (lessThan (max 50.0 (orderedMs * 5.0)))
 
 // ------------------------------------------------------------------------------------------------
 // Additional data profiles (beyond the ideal 8-word cycle)
