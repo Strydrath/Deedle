@@ -21,7 +21,9 @@ type RealSourceBenchmarks() =
     let parquetPath = Path.Combine(dataDir, ParquetTestData.defaultDatasetName)
 
     let mutable virtualFrame : Frame<DateTimeOffset, string> = Unchecked.defaultof<_>
+    let mutable virtualParquetFrame : Frame<DateTimeOffset, string> = Unchecked.defaultof<_>
     let mutable virtualFloatSeries : Series<int64, float> = Unchecked.defaultof<_>
+    let mutable virtualParquetFloatSeries : Series<int64, float> = Unchecked.defaultof<_>
     let mutable materializedFrame : Frame<int, string> = Unchecked.defaultof<_>
 
     [<GlobalSetup>]
@@ -37,7 +39,21 @@ type RealSourceBenchmarks() =
                 searchLookupRange = VirtualLookupRange.forRepeatingCycle CsvTestData.words8,
                 columnKeys = [ "Id"; "Category" ])
         virtualFloatSeries <- CsvTestData.createFloatValueSeries csvPath
+        virtualParquetFrame <-
+            Virtual.ReadParquet(
+                parquetPath,
+                indexColumn = "Timestamp",
+                searchColumn = "Category",
+                searchLookupRange = VirtualLookupRange.forRepeatingCycle CsvTestData.words8,
+                columnKeys = [ "Id"; "Category" ])
+        virtualParquetFloatSeries <- ParquetTestData.createFloatValueSeries parquetPath
         materializedFrame <- Frame.ReadCsv(csvPath, inferRows=100)
+
+    [<Benchmark>]
+    member _.VirtualCsv_FilterRowsBy2_Step() =
+        virtualFrame
+        |> Frame.filterRowsBy2 "Category" searchValue "Category" searchValue
+        |> ignore
 
     [<Benchmark(Baseline = true)>]
     member _.VirtualCsv_FilterRowsBy_Step() =
@@ -64,6 +80,20 @@ type RealSourceBenchmarks() =
         Stats.sum (materializedFrame.GetColumn<float>("Value")) |> ignore
 
     /// B13: load + sum — virtual reads only the Value column.
+    [<Benchmark>]
+    member _.VirtualParquet_FilterRowsBy_Step() =
+        virtualParquetFrame |> Frame.filterRowsBy "Category" searchValue |> ignore
+
+    [<Benchmark>]
+    member _.VirtualParquet_FilterRowsBy2_Step() =
+        virtualParquetFrame
+        |> Frame.filterRowsBy2 "Category" searchValue "Category" searchValue
+        |> ignore
+
+    [<Benchmark>]
+    member _.VirtualParquet_Slice1000() =
+        virtualParquetFloatSeries.[0L .. 999L] |> ignore
+
     [<Benchmark>]
     member _.VirtualParquet_StatsSum() =
         Stats.sum (ParquetTestData.createFloatValueSeries parquetPath) |> ignore

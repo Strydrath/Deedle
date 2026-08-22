@@ -362,7 +362,7 @@ module InstrumentedOrdinalSource =
     let rebuilt = frame |> Frame.replaceCol "S2" mapped
     c, rebuilt, words
 
-  /// Ordinal-index frame (linear Search fallback — no virtual LookupRange path).
+  /// Ordinal-index frame with Step LookupRange on the search column (B14 fast path).
   let createOrdinalSearchFrame (length: int64) =
     let words = "lorem ipsum dolor sit amet consectetur adipiscing elit".Split(' ')
     let c = AccessCounters()

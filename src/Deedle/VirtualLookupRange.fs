@@ -82,7 +82,11 @@ module LookupRangeExecutor =
 
   let lookupRange (length: int64) (mode: LookupRangeMode<'T>) (value: 'T) (context: string) =
     match mode with
-    | LookupRangeUnsupported -> failwithf "LookupRange: not configured on %s" context
+    | LookupRangeUnsupported ->
+        raise (NotSupportedException(
+          sprintf
+            "%s: LookupRange is not configured on this virtual column. Configure searchLookupRange (e.g. VirtualLookupRange.forRepeatingCycle, forCategorical, or scan) or use Virtual.ReadCsv with a low-cardinality string search column (<=64 distinct values are inferred automatically)."
+            context))
     | LookupRangeExactFixed f ->
         let lo, hi = f value
         RangeRestriction.Fixed(Address.ofInt64 lo, Address.ofInt64 hi)
@@ -106,15 +110,30 @@ module LookupRangeExecutor =
            |> RangeRestriction.Custom)
 
   let clipLookupRange (mode: LookupRangeMode<'T>) (lo: int64) (newLen: int64) =
+    let hi = lo + newLen - 1L
     match mode with
     | LookupRangeUnsupported -> LookupRangeUnsupported
     | LookupRangeExactFixed f ->
         LookupRangeExactFixed(fun v ->
           let a, b = f v
           max 0L (a - lo), min (newLen - 1L) (b - lo))
-    | LookupRangeStep f -> LookupRangeStep f
+    | LookupRangeStep f ->
+        LookupRangeStep (fun v ->
+          let offset, step = f v
+          if offset < 0 || step <= 0 then (offset, step)
+          else
+            let firstAbs =
+              if int64 offset >= lo then int64 offset
+              else int64 offset + (lo - int64 offset + int64 step - 1L) / int64 step * int64 step
+            if firstAbs > hi then (-1, step)
+            else (int (firstAbs - lo), step))
     | LookupRangeFullFixed -> LookupRangeFullFixed
-    | LookupRangeIndexList f -> LookupRangeIndexList f
+    | LookupRangeIndexList f ->
+        LookupRangeIndexList (fun v ->
+          f v
+          |> List.choose (fun abs ->
+              let local = abs - lo
+              if local >= 0L && local < newLen then Some local else None))
 
   /// Sub-vector plan: callers compose `valueAt << MapRow` so OptionalValue sources stay typed.
   type SubVectorSpec<'T> =

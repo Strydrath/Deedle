@@ -135,3 +135,31 @@ let ``B6 file-backed filter is faster than materialized full scan`` () =
       |> Seq.length
       |> ignore)
   virtualMs |> should be (lessThan materializedMs)
+
+[<Test; NonParallelizable>]
+let ``B9 CSV filterRowsBy2 on Virtual ReadCsv stays virtual with correct count`` () =
+  B6.ensureDataset() |> ignore
+  let frame =
+    Virtual.ReadCsv(
+      B6.csvPath,
+      indexColumn = "Timestamp",
+      searchColumn = "Category",
+      searchLookupRange = VirtualLookupRange.forRepeatingCycle CsvTestData.words8,
+      columnKeys = [ "Id"; "Category" ])
+  let fused = frame |> Frame.filterRowsBy2 "Category" B6.searchValue "Category" B6.searchValue
+  FrameProbe.rowIndexIsVirtual fused |> shouldEqual true
+  fused.RowCount |> shouldEqual (B6.expectedMatchCount B6.nLarge CsvTestData.words8.Length)
+
+[<Test; NonParallelizable>]
+let ``B9 CSV filterRowsBy2 row count matches single filter on RealSource`` () =
+  B6.ensureDataset() |> ignore
+  let frame =
+    Virtual.ReadCsv(
+      B6.csvPath,
+      indexColumn = "Timestamp",
+      searchColumn = "Category",
+      searchLookupRange = VirtualLookupRange.forRepeatingCycle CsvTestData.words8,
+      columnKeys = [ "Id"; "Category" ])
+  let single = frame |> Frame.filterRowsBy "Category" B6.searchValue
+  let fused = frame |> Frame.filterRowsBy2 "Category" B6.searchValue "Category" B6.searchValue
+  fused.RowCount |> shouldEqual single.RowCount

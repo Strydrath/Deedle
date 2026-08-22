@@ -18,6 +18,7 @@ open Deedle.Virtual.Sources
 open Deedle.Vectors.Virtual
 open Deedle.Parquet
 open Deedle.Parquet.Virtual.Sources
+open Deedle.Tests.VirtualInstrumentation
 
 module private B13 =
   let nLarge = 100_000L
@@ -89,6 +90,36 @@ let ``B13 Virtual ReadParquet builds searchable frame`` () =
   frame.RowCount |> shouldEqual (int B13.nLarge)
   let filtered = frame |> Frame.filterRowsBy "Category" "lorem"
   filtered.RowCount |> shouldEqual 12_500
+
+[<Test; NonParallelizable>]
+let ``B9 Parquet filterRowsBy2 on Virtual ReadParquet stays virtual with correct count`` () =
+  B13.ensureParquet()
+  let searchValue = "lorem"
+  let frame =
+    Virtual.ReadParquet(
+      B13.parquetPath,
+      indexColumn = "Timestamp",
+      searchColumn = "Category",
+      searchLookupRange = VirtualLookupRange.forRepeatingCycle CsvTestData.words8,
+      columnKeys = [ "Id"; "Category" ])
+  let fused = frame |> Frame.filterRowsBy2 "Category" searchValue "Category" searchValue
+  FrameProbe.rowIndexIsVirtual fused |> shouldEqual true
+  fused.RowCount |> shouldEqual 12_500
+
+[<Test; NonParallelizable>]
+let ``B9 Parquet filterRowsBy2 row count matches single filter on RealSource`` () =
+  B13.ensureParquet()
+  let searchValue = "lorem"
+  let frame =
+    Virtual.ReadParquet(
+      B13.parquetPath,
+      indexColumn = "Timestamp",
+      searchColumn = "Category",
+      searchLookupRange = VirtualLookupRange.forRepeatingCycle CsvTestData.words8,
+      columnKeys = [ "Id"; "Category" ])
+  let single = frame |> Frame.filterRowsBy "Category" searchValue
+  let fused = frame |> Frame.filterRowsBy2 "Category" searchValue "Category" searchValue
+  fused.RowCount |> shouldEqual single.RowCount
 
 [<Test>]
 let ``B13 Parquet null floats stay missing not NaN`` () =
