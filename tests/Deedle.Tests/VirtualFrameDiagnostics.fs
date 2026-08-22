@@ -6,7 +6,7 @@
 #load "../Common/FsUnit.fs"
 #load "VirtualInstrumentation.fs"
 #else
-module Deedle.Tests.VirtualGuardrails
+module Deedle.Tests.VirtualFrameDiagnostics
 #endif
 
 open System
