@@ -67,7 +67,7 @@ type ParquetFileIndex(path: string) =
   member _.FieldIndex(name: string) =
     match dataFields |> Array.tryFindIndex (fun f -> String.Equals(f.Name, name, StringComparison.OrdinalIgnoreCase)) with
     | Some idx -> idx
-    | None -> failwithf "ParquetVirtualSource: column '%s' not found" name
+    | None -> failwithf "VirtualParquetSource: column '%s' not found" name
 
   /// Read only the named column from each row group (not the entire row group).
   member private this.ReadColumn (name: string) =
@@ -183,7 +183,7 @@ module internal ParquetColumnSource =
     | Some name ->
       match fields |> Array.tryFindIndex (fun f -> String.Equals(f.Name, name, StringComparison.OrdinalIgnoreCase)) with
       | Some idx -> idx
-      | None -> failwithf "ParquetVirtualSource: index column '%s' not found" name
+      | None -> failwithf "VirtualParquetSource: index column '%s' not found" name
     | None ->
       let preferred =
         fields
@@ -217,7 +217,7 @@ module internal ParquetColumnSource =
     elif baseType = typeof<DateTimeOffset> then ParquetColumnKind.DateTimeOffset
     else ParquetColumnKind.String
 
-module ParquetVirtualSource =
+module VirtualParquetSource =
   open ParquetColumnSource
 
   let private createTypedColumn (index: ParquetFileIndex) (name: string) (kind: ParquetColumnKind) (lookupRange: LookupRangeMode<string> option) =
@@ -237,7 +237,7 @@ module ParquetVirtualSource =
     | ParquetColumnKind.DateTimeOffset -> createDateTimeOffset index name
 
   let createFrame (parquetPath: string) (options: VirtualReadParquetOptions) =
-    if not (File.Exists parquetPath) then failwithf "ParquetVirtualSource: file not found '%s'" parquetPath
+    if not (File.Exists parquetPath) then failwithf "VirtualParquetSource: file not found '%s'" parquetPath
     // Do not dispose: column sources keep `fileIndex` alive for the frame lifetime.
     let fileIndex = new ParquetFileIndex(parquetPath)
     if fileIndex.Length = 0L then invalidArg "parquetPath" "Parquet file has no data rows"
@@ -365,4 +365,4 @@ module VirtualParquetExtensions =
         { IndexColumn = indexColumn
           SearchColumn = searchCol
           ColumnKeys = columnKeys }
-      ParquetVirtualSource.createFrame path options
+      VirtualParquetSource.createFrame path options

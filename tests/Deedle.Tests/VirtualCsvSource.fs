@@ -51,12 +51,12 @@ module private InstrumentedCsvSource =
   let createOrderedSearchFrame (csvPath: string) (counters: AccessCounters) =
     let lineIndex = CsvLineIndex(csvPath)
     let idx =
-      wrap counters (CsvVirtualSource.createIndexSource lineIndex "Timestamp")
+      wrap counters (VirtualCsvSource.createIndexSource lineIndex "Timestamp")
       :?> IVirtualVectorSource<DateTimeOffset>
-    let idCol = wrap counters (CsvVirtualSource.createColumnSource lineIndex "Id" None)
+    let idCol = wrap counters (VirtualCsvSource.createColumnSource lineIndex "Id" None)
     let catCol =
       wrap counters
-        (CsvVirtualSource.createColumnSource lineIndex "Category"
+        (VirtualCsvSource.createColumnSource lineIndex "Category"
           (Some(VirtualLookupRange.forRepeatingCycle CsvTestData.words8)))
     let frame = Virtual.CreateFrame(idx, [ "S1"; "S2" ], [ idCol; catCol ])
     counters, frame, CsvTestData.words8
@@ -64,7 +64,7 @@ module private InstrumentedCsvSource =
   let createFloatValueSeries (csvPath: string) (counters: AccessCounters) =
     let lineIndex = CsvLineIndex(csvPath)
     let src =
-      wrap counters (CsvVirtualSource.createColumnSource lineIndex "Value" None)
+      wrap counters (VirtualCsvSource.createColumnSource lineIndex "Value" None)
       :?> IVirtualVectorSource<float>
     counters, Virtual.CreateOrdinalSeries(src)
 
@@ -225,8 +225,8 @@ let ``ReadCsv exposes virtual ordered row index and csv-file scheme`` () =
 let ``shared row cache decodes each row once across columns`` () =
   SearchDataset.ensureCsv()
   let lineIndex = CsvLineIndex(SearchDataset.csvPath)
-  let idSrc = CsvVirtualSource.createColumnSource lineIndex "Id" None :?> IVirtualVectorSource<int64>
-  let valSrc = CsvVirtualSource.createColumnSource lineIndex "Value" None :?> IVirtualVectorSource<float>
+  let idSrc = VirtualCsvSource.createColumnSource lineIndex "Id" None :?> IVirtualVectorSource<int64>
+  let valSrc = VirtualCsvSource.createColumnSource lineIndex "Value" None :?> IVirtualVectorSource<float>
   let idSeries = Virtual.CreateOrdinalSeries(idSrc)
   let valSeries = Virtual.CreateOrdinalSeries(valSrc)
   lineIndex.ResetSplitCount()
@@ -240,7 +240,7 @@ let ``slice decode count stays within slice bounds`` () =
   SearchDataset.ensureCsv()
   let lineIndex = CsvLineIndex(SearchDataset.csvPath)
   let src =
-    CsvVirtualSource.createColumnSource lineIndex "Value" None
+    VirtualCsvSource.createColumnSource lineIndex "Value" None
     :?> IVirtualVectorSource<float>
   let series = Virtual.CreateOrdinalSeries(src)
   lineIndex.ResetSplitCount()

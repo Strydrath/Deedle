@@ -66,6 +66,11 @@ module VirtualLookupRange =
   let fullFixed = LookupRangeFullFixed
 
   /// Maximum distinct non-empty string values for automatic LookupRange inference.
+  /// Inference scans the full column at load time and may build an IndexList map; this cap
+  /// keeps that work bounded for enum-like columns and forces an explicit LookupRange mode
+  /// (e.g. scan) when cardinality is high. Not tied to an existing Deedle constant — chosen
+  /// as a conservative "small categorical" threshold (typical search columns ≪ 64; tests use
+  /// ~100+ distinct as the high-cardinality case).
   [<Literal>]
   let MaxInferredSearchCardinality = 64
 
