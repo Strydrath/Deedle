@@ -223,17 +223,29 @@ let ``B3 Materialize flips series to linear`` () =
 // ------------------------------------------------------------------------------------------------
 
 [<Test>]
-let ``B3 Ordinal filterRowsBy does not use virtual Search path`` () =
+let ``B3 Ordinal filterRowsBy preserves virtual row index via LookupRange`` () =
   let words = "lorem ipsum dolor sit amet".Split(' ')
   let c, s2 = InstrumentedOrdinalSource.createSearchableStrings Op.nSmall words
   let _, s1 = InstrumentedOrdinalSource.createLongs Op.nSmall
   let f = Virtual.CreateOrdinalFrame(["S1"; "S2"], [s1 :> IVirtualVectorSource; s2 :> IVirtualVectorSource])
   c.Reset()
   let filtered = f |> Frame.filterRowsBy "S2" "lorem"
-  // Ordinal Search falls back to base builder → non-virtual row index
-  FrameProbe.rowIndexIsVirtual filtered |> shouldEqual false
-  // LookupRange is not used on the ordinal virtual Search short-circuit path
-  c.Snapshot().LookupRangeCount |> shouldEqual 0
+  let d = c.Snapshot()
+  d.LookupRangeCount |> should be (greaterThan 0)
+  d.ValueAtCount |> shouldEqual 0
+  FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
+  filtered.RowCount |> should be (greaterThan 0)
+
+[<Test>]
+let ``B3 Ordinal filterRowsBy without LookupRange throws NotSupportedException`` () =
+  let words = "lorem ipsum dolor sit amet".Split(' ')
+  let c = AccessCounters()
+  let valueAt i = words.[int (i % int64 words.Length)]
+  let s2 = InstrumentedOrdinalSource<string>(Op.nSmall, valueAt, c, hasMissing=false)
+  let _, s1 = InstrumentedOrdinalSource.createLongs Op.nSmall
+  let f = Virtual.CreateOrdinalFrame(["S1"; "S2"], [s1 :> IVirtualVectorSource; s2 :> IVirtualVectorSource])
+  (fun () -> f |> Frame.filterRowsBy "S2" "lorem" |> ignore)
+  |> should throw typeof<NotSupportedException>
 
 [<Test>]
 let ``B3 FillMissing under virtual scheme stays virtual`` () =

@@ -160,7 +160,53 @@ module CsvVirtualSource =
       OptionalValue(parse s)
     OrdinalVirtualSource(lineIndex.Length, valueAt, "csv-file", ?asLong=asLong) :> IVirtualVectorSource
 
-  let internal createTypedColumn (lineIndex: CsvLineIndex) (columnIndex: int) (kind: string) lookupRange =
+  let private maxInferredSearchCardinality = 64
+
+  let private stringValueAt (lineIndex: CsvLineIndex) (columnIndex: int) =
+    fun (row: int64) ->
+      let s = field (lineIndex.ReadFields row) columnIndex
+      if isMissingCell s then "" else s.Trim()
+
+  /// Infer LookupRange for low-cardinality string columns (B14).
+  let internal tryInferStringLookupRange (lineIndex: CsvLineIndex) (columnIndex: int) (columnName: string) =
+    let length = lineIndex.Length
+    if length = 0L then None
+    else
+      let valueAt = stringValueAt lineIndex columnIndex
+      let values = [| for i in 0L .. length - 1L -> valueAt i |]
+      let distinct =
+        values |> Array.filter ((<>) "") |> Array.distinct
+      if distinct.Length = 0 || distinct.Length > maxInferredSearchCardinality then None
+      else
+        let period = distinct.Length
+        let isRepeatingCycle =
+          values
+          |> Array.mapi (fun i v -> v = "" || v = distinct.[i % period])
+          |> Array.forall id
+        if isRepeatingCycle then
+          Some(VirtualLookupRange.forRepeatingCycle distinct, sprintf "repeating cycle (period %d)" period)
+        else
+          Some(
+            VirtualLookupRange.forCategoricalScan length valueAt,
+            sprintf "categorical IndexList (%d distinct; one-time O(N) scan per filter value)" distinct.Length)
+
+  let private resolveSearchLookupRange (lineIndex: CsvLineIndex) (_header: string[]) (colIdx: int) (name: string) (kind: string) (options: VirtualReadCsvOptions) =
+    match options.SearchColumn with
+    | Some (searchName, LookupRangeUnsupported) when String.Equals(name, searchName, StringComparison.OrdinalIgnoreCase) && kind = "string" ->
+        match tryInferStringLookupRange lineIndex colIdx name with
+        | Some (mode, desc) ->
+            System.Diagnostics.Trace.WriteLine(
+              sprintf "Deedle.Virtual.ReadCsv: inferred %s LookupRange for search column '%s'." desc name)
+            Some mode
+        | None ->
+            System.Diagnostics.Trace.WriteLine(
+              sprintf "Deedle.Virtual.ReadCsv: search column '%s' has high cardinality; configure searchLookupRange explicitly (e.g. VirtualLookupRange.scan)." name)
+            None
+    | Some (searchName, mode) when String.Equals(name, searchName, StringComparison.OrdinalIgnoreCase) ->
+        Some mode
+    | _ -> None
+
+  let private createTypedColumn (lineIndex: CsvLineIndex) (columnIndex: int) (kind: string) lookupRange =
     match kind with
     | "datetime" ->
       createOptionalColumn lineIndex columnIndex tryParseDateTime (Some (fun dto -> dto.UtcTicks)) None
@@ -203,16 +249,14 @@ module CsvVirtualSource =
       match options.ColumnKeys with
       | Some ks -> ks
       | None -> valueColumnIndices |> List.map snd
-    let lookupForColumn (name: string) =
-      match options.SearchColumn with
-      | Some (searchName, mode) when String.Equals(name, searchName, StringComparison.OrdinalIgnoreCase) -> Some mode
-      | _ -> None
+    let lookupForColumn (name: string) (colIdx: int) (kind: string) =
+      resolveSearchLookupRange lineIndex header colIdx name kind options
     let sources =
       keys
       |> List.map (fun name ->
           let colIdx = columnIndex header name
           let kind = inferColumnKind lineIndex colIdx 100
-          createTypedColumn lineIndex colIdx kind (lookupForColumn name))
+          createTypedColumn lineIndex colIdx kind (lookupForColumn name colIdx kind))
     Virtual.CreateFrame(indexSource, keys, sources)
 
   let createIndexSource (lineIndex: CsvLineIndex) (columnName: string) =
@@ -350,7 +394,12 @@ module VirtualCsvExtensions =
       let searchCol =
         match searchColumn with
         | None -> None
-        | Some name -> Some(name, defaultArg searchLookupRange LookupRangeUnsupported)
+        | Some name ->
+            match searchLookupRange with
+            | Some mode -> Some(name, mode)
+            | None ->
+                // Defer inference to createFrame (needs file content).
+                Some(name, LookupRangeUnsupported)
       let options : VirtualReadCsvOptions =
         { IndexColumn = indexColumn
           SearchColumn = searchCol
