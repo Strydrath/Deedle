@@ -160,51 +160,18 @@ module CsvVirtualSource =
       OptionalValue(parse s)
     OrdinalVirtualSource(lineIndex.Length, valueAt, "csv-file", ?asLong=asLong) :> IVirtualVectorSource
 
-  let private maxInferredSearchCardinality = 64
-
   let private stringValueAt (lineIndex: CsvLineIndex) (columnIndex: int) =
     fun (row: int64) ->
       let s = field (lineIndex.ReadFields row) columnIndex
       if isMissingCell s then "" else s.Trim()
 
-  /// Infer LookupRange for low-cardinality string columns (B14).
-  let internal tryInferStringLookupRange (lineIndex: CsvLineIndex) (columnIndex: int) (columnName: string) =
-    let length = lineIndex.Length
-    if length = 0L then None
-    else
-      let valueAt = stringValueAt lineIndex columnIndex
-      let values = [| for i in 0L .. length - 1L -> valueAt i |]
-      let distinct =
-        values |> Array.filter ((<>) "") |> Array.distinct
-      if distinct.Length = 0 || distinct.Length > maxInferredSearchCardinality then None
-      else
-        let period = distinct.Length
-        let isRepeatingCycle =
-          values
-          |> Array.mapi (fun i v -> v = "" || v = distinct.[i % period])
-          |> Array.forall id
-        if isRepeatingCycle then
-          Some(VirtualLookupRange.forRepeatingCycle distinct, sprintf "repeating cycle (period %d)" period)
-        else
-          Some(
-            VirtualLookupRange.forCategoricalScan length valueAt,
-            sprintf "categorical IndexList (%d distinct; one-time O(N) scan per filter value)" distinct.Length)
-
   let private resolveSearchLookupRange (lineIndex: CsvLineIndex) (_header: string[]) (colIdx: int) (name: string) (kind: string) (options: VirtualReadCsvOptions) =
-    match options.SearchColumn with
-    | Some (searchName, LookupRangeUnsupported) when String.Equals(name, searchName, StringComparison.OrdinalIgnoreCase) && kind = "string" ->
-        match tryInferStringLookupRange lineIndex colIdx name with
-        | Some (mode, desc) ->
-            System.Diagnostics.Trace.WriteLine(
-              sprintf "Deedle.Virtual.ReadCsv: inferred %s LookupRange for search column '%s'." desc name)
-            Some mode
-        | None ->
-            System.Diagnostics.Trace.WriteLine(
-              sprintf "Deedle.Virtual.ReadCsv: search column '%s' has high cardinality; configure searchLookupRange explicitly (e.g. VirtualLookupRange.scan)." name)
-            None
-    | Some (searchName, mode) when String.Equals(name, searchName, StringComparison.OrdinalIgnoreCase) ->
-        Some mode
-    | _ -> None
+    VirtualLookupRange.resolveSearchColumnLookupRange
+      "Deedle.Virtual.ReadCsv"
+      options.SearchColumn
+      name
+      (kind = "string")
+      (fun () -> VirtualLookupRange.tryInferStringLookupRange lineIndex.Length (stringValueAt lineIndex colIdx))
 
   let private createTypedColumn (lineIndex: CsvLineIndex) (columnIndex: int) (kind: string) lookupRange =
     match kind with
@@ -364,8 +331,8 @@ module CsvTestData =
   let ensureSearchCsv (path: string) (rowCount: int64) =
     ensureSearchCsvWithSeed path rowCount defaultSeed
 
-  /// B6-compatible frame: Timestamp index, Id + searchable Category (8-word cycle Step LookupRange).
-  let createB6SearchFrame (csvPath: string) =
+  /// Search-dataset frame: Timestamp index, Id + searchable Category (8-word cycle Step LookupRange).
+  let createSearchDatasetFrame (csvPath: string) =
     let options =
       { VirtualReadCsvOptions.Default with
           IndexColumn = Some "Timestamp"

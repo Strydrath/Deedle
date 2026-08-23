@@ -126,7 +126,7 @@ module FrameProbe =
     SchemeProbe.isVirtualScheme f.RowIndex.AddressingScheme
 
 // ------------------------------------------------------------------------------------------------
-// Counting wrapper for library virtual sources (B6 / harness)
+// Counting wrapper for library virtual sources (harness)
 // ------------------------------------------------------------------------------------------------
 
 type CountingVirtualSource<'T>(counters: AccessCounters, inner: IVirtualVectorSource<'T>) =
@@ -260,7 +260,7 @@ module InstrumentedOrdinalSource =
     let valueAt i = words.[int (i % int64 words.Length)]
     let indexOf v =
       let o = words |> Array.findIndex ((=) v) |> int64
-      // Fixed first-hit window (B4 can study ExactFixed quality separately)
+      // Fixed first-hit window (ExactFixed quality studied separately)
       o, o
     c, InstrumentedOrdinalSource<string>(length, valueAt, c, lookupRange=LookupRangeExactFixed indexOf, hasMissing=false)
 
@@ -297,7 +297,7 @@ module InstrumentedOrdinalSource =
     let vals = InstrumentedOrdinalSource<float>(length, float, c, hasMissing=false)
     c, Virtual.CreateSeries(idx, vals)
 
-  /// Core factory: custom `valueAt` + LookupRange mode (B4 data profiles).
+  /// Core factory: custom `valueAt` + LookupRange mode (LookupRange data profiles).
   let createOrderedSearchFrameCore
       (length: int64)
       (valueAt: int64 -> string)
@@ -312,7 +312,7 @@ module InstrumentedOrdinalSource =
     let frame = Virtual.CreateFrame(idx, ["S1"; "S2"], [s1 :> IVirtualVectorSource; s2 :> IVirtualVectorSource])
     c, frame
 
-  /// Ordered time frame; `lookupRange` controls search-column LookupRange quality (B4).
+  /// Ordered time frame; `lookupRange` controls search-column LookupRange quality.
   /// Default data: 11-word repeating cycle (ideal Step case).
   let createOrderedSearchFrameWith (length: int64) (lookupRange: LookupRangeMode<string>) =
     let words = "lorem ipsum dolor sit amet consectetur adipiscing elit".Split(' ')
@@ -362,7 +362,7 @@ module InstrumentedOrdinalSource =
     let rebuilt = frame |> Frame.replaceCol "S2" mapped
     c, rebuilt, words
 
-  /// Ordinal-index frame with Step LookupRange on the search column (B14 fast path).
+  /// Ordinal-index frame with Step LookupRange on the search column.
   let createOrdinalSearchFrame (length: int64) =
     let words = "lorem ipsum dolor sit amet consectetur adipiscing elit".Split(' ')
     let c = AccessCounters()

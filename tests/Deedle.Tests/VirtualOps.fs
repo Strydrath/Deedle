@@ -26,7 +26,7 @@ module private Range =
     RangeRestriction.Custom { Offset = offset; Step = step } : RangeRestriction<Address>
 
 [<Test>]
-let ``B9 Diff stays virtual and matches materialized values`` () =
+let ``Diff stays virtual and matches materialized values`` () =
   let c, s = InstrumentedOrdinalSource.createFloatSeries 32L
   c.Reset()
   let d = s |> Series.diff 1
@@ -35,7 +35,7 @@ let ``B9 Diff stays virtual and matches materialized values`` () =
   d.[1L] |> shouldEqual (s.[1L] - s.[0L])
 
 [<Test>]
-let ``B9 Shift on ordered virtual series stays virtual`` () =
+let ``Shift on ordered virtual series stays virtual`` () =
   let c, s = InstrumentedOrdinalSource.createOrderedFloatSeries 64L
   c.Reset()
   let shifted = s |> Series.shift 1
@@ -44,7 +44,7 @@ let ``B9 Shift on ordered virtual series stays virtual`` () =
   shifted.KeyCount |> shouldEqual 63
 
 [<Test>]
-let ``B9 Shift with negative offset stays virtual`` () =
+let ``Shift with negative offset stays virtual`` () =
   let c, s = InstrumentedOrdinalSource.createOrderedFloatSeries 64L
   c.Reset()
   let shifted = s |> Series.shift -1
@@ -54,7 +54,7 @@ let ``B9 Shift with negative offset stays virtual`` () =
   shifted.GetAt(0) |> shouldEqual (s.GetAt(1))
 
 [<Test>]
-let ``B9 Frame.shift stays virtual without ValueAt`` () =
+let ``Frame.shift stays virtual without ValueAt`` () =
   let c, frame, _ = InstrumentedOrdinalSource.createOrderedSearchFrameWith 64L (LookupRangeStep (fun _ -> 0, 1))
   c.Reset()
   let shifted = frame |> Frame.shift 1
@@ -63,7 +63,7 @@ let ``B9 Frame.shift stays virtual without ValueAt`` () =
   shifted.RowCount |> shouldEqual 63
 
 [<Test>]
-let ``B9 Frame.diff stays virtual until read`` () =
+let ``Frame.diff stays virtual until read`` () =
   let n = 32L
   let c = AccessCounters()
   let start = DateTimeOffset(DateTime(2000, 1, 1), TimeSpan.FromHours(-1.0))
@@ -79,7 +79,7 @@ let ``B9 Frame.diff stays virtual until read`` () =
   d.GetColumn<float>("V").GetAt(0) |> shouldEqual 1.0
 
 [<Test>]
-let ``B9 LookupRangeExecutor.intersect of identical Step ranges is identity`` () =
+let ``LookupRangeExecutor.intersect of identical Step ranges is identity`` () =
   match LookupRangeExecutor.intersect (Range.step 0 8) (Range.step 0 8) with
   | RangeRestriction.Custom(:? StepRange as s) ->
       s.Offset |> shouldEqual 0
@@ -87,13 +87,13 @@ let ``B9 LookupRangeExecutor.intersect of identical Step ranges is identity`` ()
   | other -> failwithf "expected StepRange, got %A" other
 
 [<Test>]
-let ``B9 LookupRangeExecutor.intersect of disjoint Step ranges is empty`` () =
+let ``LookupRangeExecutor.intersect of disjoint Step ranges is empty`` () =
   match LookupRangeExecutor.intersect (Range.step 0 8) (Range.step 1 8) with
   | RangeRestriction.Custom ar -> Seq.length ar |> shouldEqual 0
   | other -> failwithf "expected empty custom range, got %A" other
 
 [<Test>]
-let ``B9 WindowSizeInto id windows stay virtual until aggregated`` () =
+let ``WindowSizeInto id windows stay virtual until aggregated`` () =
   let c, s = InstrumentedOrdinalSource.createFloatSeries 64L
   c.Reset()
   let windows = s |> Series.windowSizeInto (4, Boundary.Skip) DataSegment.data
@@ -103,7 +103,7 @@ let ``B9 WindowSizeInto id windows stay virtual until aggregated`` () =
   Stats.sum w0 |> shouldEqual (0.0 + 1.0 + 2.0 + 3.0)
 
 [<Test>]
-let ``B9 filterRowsBy2 fuses two LookupRanges into one frame rebuild`` () =
+let ``filterRowsBy2 fuses two LookupRanges into one frame rebuild`` () =
   let c, frame, _ = InstrumentedOrdinalSource.createOrderedSearchFrameWith 64L (LookupRangeStep (fun _ -> 0, 1))
   let words = "lorem ipsum dolor sit amet consectetur adipiscing elit".Split(' ')
   c.Reset()
@@ -124,13 +124,13 @@ let ``B9 filterRowsBy2 fuses two LookupRanges into one frame rebuild`` () =
   chainedDelta.GetSubVectorCount |> should be (greaterThan fusedDelta.GetSubVectorCount)
 
 [<Test>]
-let ``B9 filterRowsBy2 of disjoint values on the same column is empty`` () =
+let ``filterRowsBy2 of disjoint values on the same column is empty`` () =
   let _, frame, words = InstrumentedOrdinalSource.createOrderedSearchFrameWith 64L (LookupRangeStep (fun _ -> 0, 1))
   let empty = frame |> Frame.filterRowsBy2 "S2" words.[0] "S2" words.[1]
   empty.RowCount |> shouldEqual 0
 
 [<Test>]
-let ``B9 filterRowsBy2 Step intersect IndexList does not throw`` () =
+let ``filterRowsBy2 Step intersect IndexList does not throw`` () =
   let n = 64L
   let words = "lorem ipsum dolor sit amet consectetur adipiscing elit".Split(' ')
   let valueAt i = words.[int (i % int64 words.Length)]
@@ -155,7 +155,7 @@ let ``B9 filterRowsBy2 Step intersect IndexList does not throw`` () =
   fused.RowCount |> shouldEqual expected.RowCount
 
 [<Test>]
-let ``B9 LookupRangeExecutor.intersect Step with IndexList stays enumerable`` () =
+let ``LookupRangeExecutor.intersect Step with IndexList stays enumerable`` () =
   let step = RangeRestriction.Custom { Offset = 0; Step = 2 } : RangeRestriction<Address>
   let listAddrs = [ 0L; 2L; 3L; 4L; 7L ] |> List.map Address.ofInt64
   let list =
@@ -176,7 +176,7 @@ let ``B9 LookupRangeExecutor.intersect Step with IndexList stays enumerable`` ()
   addrsOf (LookupRangeExecutor.intersect list step) |> shouldEqual [ 0L; 2L; 4L ]
 
 [<Test>]
-let ``B9 Projection pushdown does not ValueAt unused columns at filter time`` () =
+let ``Projection pushdown does not ValueAt unused columns at filter time`` () =
   let n = 64L
   let words = "lorem ipsum dolor sit amet".Split(' ')
   let cIdx = AccessCounters()
@@ -204,7 +204,7 @@ let ``B9 Projection pushdown does not ValueAt unused columns at filter time`` ()
   cSearch.Snapshot().ValueAtCount |> shouldEqual 0
 
 [<Test>]
-let ``B9 Inner zip of overlapping ordinal slices stays virtual`` () =
+let ``Inner zip of overlapping ordinal slices stays virtual`` () =
   let _, s = InstrumentedOrdinalSource.createOrdinalSeries 1_000L
   let a = s.[0L .. 500L]
   let b = s.[250L .. 750L]
@@ -214,7 +214,7 @@ let ``B9 Inner zip of overlapping ordinal slices stays virtual`` () =
   zipped.GetAt(0) |> shouldEqual (OptionalValue 250L, OptionalValue 250L)
 
 [<Test>]
-let ``B9 Outer join of mismatched ordinal lengths materializes`` () =
+let ``Outer join of mismatched ordinal lengths materializes`` () =
   let _, s1 = InstrumentedOrdinalSource.createFloats 64L
   let _, s2 = InstrumentedOrdinalSource.createFloats 32L
   let f1 = Virtual.CreateOrdinalFrame(["A"], [s1 :> IVirtualVectorSource])
@@ -223,8 +223,38 @@ let ``B9 Outer join of mismatched ordinal lengths materializes`` () =
   FrameProbe.rowIndexIsVirtual joined |> shouldEqual false
 
 [<Test>]
-let ``B9 GroupBy nested series are linear after a full pull`` () =
+let ``GroupBy nested series are linear after a full pull`` () =
   let c, s = InstrumentedOrdinalSource.createFloatSeries 64L
   let grouped = s |> Series.groupBy (fun _k v -> int v % 4)
   SeriesProbe.isLinear (grouped.GetAt(0)) |> shouldEqual true
   c.Snapshot().ValueAtCount |> should be (greaterThan 0)
+
+[<Test>]
+let ``chained Step filter same value may shrink rows; use filterRowsBy2`` () =
+  let n = 1000L
+  let words = "lorem ipsum dolor sit amet consectetur adipiscing elit".Split(' ')
+  let _, frame, _ = InstrumentedOrdinalSource.createOrderedSearchFrame n
+  let once = frame |> Frame.filterRowsBy "S2" words.[0]
+  let twice =
+    frame
+    |> Frame.filterRowsBy "S2" words.[0]
+    |> Frame.filterRowsBy "S2" words.[0]
+  twice.RowCount |> should be (lessThan once.RowCount)
+  let fused = frame |> Frame.filterRowsBy2 "S2" words.[0] "S2" words.[0]
+  fused.RowCount |> shouldEqual once.RowCount
+
+[<Test>]
+let ``chained filterRowsBy2 still preferred for two predicates on same column`` () =
+  let c, frame, words = InstrumentedOrdinalSource.createOrderedSearchFrame 64L
+  c.Reset()
+  let fused = frame |> Frame.filterRowsBy2 "S2" words.[0] "S2" words.[0]
+  let fusedDelta = c.Snapshot()
+  c.Reset()
+  let chained =
+    frame
+    |> Frame.filterRowsBy "S2" words.[0]
+    |> Frame.filterRowsBy "S2" words.[0]
+  chained.RowCount |> should be (lessThan (64 / words.Length))
+  fused.RowCount |> shouldEqual (64 / words.Length)
+  let chainedDelta = c.Snapshot()
+  chainedDelta.GetSubVectorCount |> should be (greaterThan fusedDelta.GetSubVectorCount)

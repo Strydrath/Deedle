@@ -22,15 +22,13 @@
     <Compile Include="LazySeries.fs" />
     <Compile Include="Ranges.fs" />
     <Compile Include="VirtualInstrumentation.fs" />
-    <Compile Include="CsvFileVirtualSource.fs" />
     <Compile Include="VirtualCsvSource.fs" />
     <Compile Include="VirtualOpMatrix.fs" />
     <Compile Include="VirtualWrappers.fs" />
     <Compile Include="VirtualOps.fs" />
     <Compile Include="VirtualLookupRange.fs" />
     <Compile Include="VirtualFrameDiagnostics.fs" />
-    <Compile Include="VirtualRealSources.fs" />
-    <Compile Include="VirtualB13Sources.fs" />
+    <Compile Include="VirtualParquetSource.fs" />
     <Compile Include="VirtualFrame.fs" />
     <Compile Include="VirtualPartitioned.fs" />
     <Compile Include="Formatting.fs" />

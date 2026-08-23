@@ -698,7 +698,7 @@ let ``Can use ColumnApply and 'abs' on a created frame`` () =
   |> shouldEqual <| series ["Value" => 0.0; "Sin" => 0.0]
 
 [<Test>]
-let ``B10 Partitioned LookupRange scan filters a matching partition row`` () =
+let ``Partitioned LookupRange scan filters a matching partition row`` () =
   let df = createSmallFrame 3 (fun _ -> 24)
   let filtered = df |> Frame.filterRowsBy "A" 2000005.0
   filtered.RowIndex.AddressingScheme :? VirtualAddressingScheme |> shouldEqual true
