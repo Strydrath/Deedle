@@ -255,19 +255,27 @@ module ParquetVirtualSource =
       match options.ColumnKeys with
       | Some ks -> ks
       | None -> valueColumnNames |> List.map snd
-    let lookupForColumn (name: string) =
-      match options.SearchColumn with
-      | Some (searchName, mode) when String.Equals(name, searchName, StringComparison.OrdinalIgnoreCase) -> Some mode
-      | _ -> None
+    let lookupForColumn (name: string) (kind: ParquetColumnKind) =
+      VirtualLookupRange.resolveSearchColumnLookupRange
+        "Deedle.Virtual.ReadParquet"
+        options.SearchColumn
+        name
+        (kind = ParquetColumnKind.String)
+        (fun () ->
+          let data = fileIndex.ReadTypedColumn<string>(name)
+          let valueAt row =
+            let ov = data.[int row]
+            if ov.HasValue then ov.Value else ""
+          VirtualLookupRange.tryInferStringLookupRange fileIndex.Length valueAt)
     let sources =
       keys
       |> List.map (fun name ->
           let colIdx = fileIndex.FieldIndex name
           let kind = columnKind fields.[colIdx]
-          createTypedColumn fileIndex name kind (lookupForColumn name))
+          createTypedColumn fileIndex name kind (lookupForColumn name kind))
     Virtual.CreateFrame(indexSource, keys, sources)
 
-/// Test-data helpers for B13 benchmarks (Parquet counterpart to `CsvTestData`).
+/// Test-data helpers for Parquet virtual benchmarks (counterpart to `CsvTestData`).
 module ParquetTestData =
   open Deedle.Parquet
 

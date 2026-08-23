@@ -23,6 +23,7 @@
 - **Filter without `LookupRange`:** virtual `filterRowsBy` on an unconfigured search column raises **`NotSupportedException`** with setup guidance (instead of a generic failure or full scan).
 - **`VirtualFrameDiagnostics`:** read-only helpers to inspect virtual row index kind, column virtuality, and scheme id.
 - **`Virtual.ReadCsv` LookupRange inference:** when `searchColumn` is set without `searchLookupRange`, low-cardinality string columns (≤64 distinct values) are inferred once at load time.
+- **`Virtual.ReadParquet` LookupRange inference (B19):** same inference as CSV for string search columns when `searchLookupRange` is omitted.
 - **`clipLookupRange`:** remaps Step/IndexList modes after Fixed slices. Prefer **`filterRowsBy2`** for two predicates on the same Step column.
 - **Virtual ordered slices / `Series.diff` / `Series.shift`:** ordered `GetAddressRange` / `GetRange` reindex onto linear `0..n-1` addresses so absolute-address partitioned sources align (fixes zero diffs on BigDeedle Ranges backends).
 

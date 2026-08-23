@@ -34,7 +34,7 @@ type LookupRangeMode<'T> =
 /// Helpers for configuring searchable columns on virtual sources.
 [<RequireQualifiedAccess>]
 module VirtualLookupRange =
-  /// Step LookupRange for values repeating on a fixed cycle (B4/B5/B6 ideal case).
+  /// Step LookupRange for values repeating on a fixed cycle (periodic categorical data).
   /// Unknown values yield an empty range (negative offset) instead of throwing.
   let forRepeatingCycle (values: 'T[]) =
     LookupRangeStep (fun v ->
@@ -65,6 +65,53 @@ module VirtualLookupRange =
   let exactFixed (selector: 'T -> int64 * int64) = LookupRangeExactFixed selector
   let fullFixed = LookupRangeFullFixed
 
+  /// Maximum distinct non-empty string values for automatic LookupRange inference.
+  [<Literal>]
+  let MaxInferredSearchCardinality = 64
+
+  /// Infer Step or categorical IndexList LookupRange from column values (ReadCsv / ReadParquet).
+  let tryInferStringLookupRange (length: int64) (valueAt: int64 -> string) =
+    if length = 0L then None
+    else
+      let values = [| for i in 0L .. length - 1L -> valueAt i |]
+      let distinct =
+        values |> Array.filter ((<>) "") |> Array.distinct
+      if distinct.Length = 0 || distinct.Length > MaxInferredSearchCardinality then None
+      else
+        let period = distinct.Length
+        let isRepeatingCycle =
+          values
+          |> Array.mapi (fun i v -> v = "" || v = distinct.[i % period])
+          |> Array.forall id
+        if isRepeatingCycle then
+          Some(forRepeatingCycle distinct, sprintf "repeating cycle (period %d)" period)
+        else
+          Some(
+            forCategoricalScan length valueAt,
+            sprintf "categorical IndexList (%d distinct; one-time O(N) scan per filter value)" distinct.Length)
+
+  /// Resolve LookupRange for one column when `searchColumn` is set on ReadCsv / ReadParquet.
+  let resolveSearchColumnLookupRange
+      (apiName: string)
+      (searchColumn: (string * LookupRangeMode<string>) option)
+      (columnName: string)
+      (isStringColumn: bool)
+      (infer: unit -> (LookupRangeMode<string> * string) option) =
+    match searchColumn with
+    | Some (searchName, LookupRangeUnsupported) when isStringColumn && String.Equals(columnName, searchName, StringComparison.OrdinalIgnoreCase) ->
+        match infer() with
+        | Some (mode, desc) ->
+            System.Diagnostics.Trace.WriteLine(
+              sprintf "%s: inferred %s LookupRange for search column '%s'." apiName desc columnName)
+            Some mode
+        | None ->
+            System.Diagnostics.Trace.WriteLine(
+              sprintf "%s: search column '%s' has high cardinality; configure searchLookupRange explicitly (e.g. VirtualLookupRange.scan)." apiName columnName)
+            None
+    | Some (searchName, mode) when String.Equals(columnName, searchName, StringComparison.OrdinalIgnoreCase) ->
+        Some mode
+    | _ -> None
+
 /// Shared LookupRange / GetSubVector logic for ordinal virtual sources.
 [<RequireQualifiedAccess>]
 module LookupRangeExecutor =
@@ -85,7 +132,7 @@ module LookupRangeExecutor =
     | LookupRangeUnsupported ->
         raise (NotSupportedException(
           sprintf
-            "%s: LookupRange is not configured on this virtual column. Configure searchLookupRange (e.g. VirtualLookupRange.forRepeatingCycle, forCategorical, or scan) or use Virtual.ReadCsv with a low-cardinality string search column (<=64 distinct values are inferred automatically)."
+            "%s: LookupRange is not configured on this virtual column. Configure searchLookupRange (e.g. VirtualLookupRange.forRepeatingCycle, forCategorical, or scan) or use Virtual.ReadCsv / Virtual.ReadParquet with a low-cardinality string search column (<=64 distinct values are inferred automatically)."
             context))
     | LookupRangeExactFixed f ->
         let lo, hi = f value
