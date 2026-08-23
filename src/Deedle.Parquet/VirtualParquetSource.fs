@@ -67,7 +67,7 @@ type ParquetFileIndex(path: string) =
   member _.FieldIndex(name: string) =
     match dataFields |> Array.tryFindIndex (fun f -> String.Equals(f.Name, name, StringComparison.OrdinalIgnoreCase)) with
     | Some idx -> idx
-    | None -> failwithf "ParquetVirtualSource: column '%s' not found" name
+    | None -> failwithf "VirtualParquetSource: column '%s' not found" name
 
   /// Read only the named column from each row group (not the entire row group).
   member private this.ReadColumn (name: string) =
@@ -183,7 +183,7 @@ module internal ParquetColumnSource =
     | Some name ->
       match fields |> Array.tryFindIndex (fun f -> String.Equals(f.Name, name, StringComparison.OrdinalIgnoreCase)) with
       | Some idx -> idx
-      | None -> failwithf "ParquetVirtualSource: index column '%s' not found" name
+      | None -> failwithf "VirtualParquetSource: index column '%s' not found" name
     | None ->
       let preferred =
         fields
@@ -217,7 +217,7 @@ module internal ParquetColumnSource =
     elif baseType = typeof<DateTimeOffset> then ParquetColumnKind.DateTimeOffset
     else ParquetColumnKind.String
 
-module ParquetVirtualSource =
+module VirtualParquetSource =
   open ParquetColumnSource
 
   let private createTypedColumn (index: ParquetFileIndex) (name: string) (kind: ParquetColumnKind) (lookupRange: LookupRangeMode<string> option) =
@@ -237,7 +237,7 @@ module ParquetVirtualSource =
     | ParquetColumnKind.DateTimeOffset -> createDateTimeOffset index name
 
   let createFrame (parquetPath: string) (options: VirtualReadParquetOptions) =
-    if not (File.Exists parquetPath) then failwithf "ParquetVirtualSource: file not found '%s'" parquetPath
+    if not (File.Exists parquetPath) then failwithf "VirtualParquetSource: file not found '%s'" parquetPath
     // Do not dispose: column sources keep `fileIndex` alive for the frame lifetime.
     let fileIndex = new ParquetFileIndex(parquetPath)
     if fileIndex.Length = 0L then invalidArg "parquetPath" "Parquet file has no data rows"
@@ -255,19 +255,27 @@ module ParquetVirtualSource =
       match options.ColumnKeys with
       | Some ks -> ks
       | None -> valueColumnNames |> List.map snd
-    let lookupForColumn (name: string) =
-      match options.SearchColumn with
-      | Some (searchName, mode) when String.Equals(name, searchName, StringComparison.OrdinalIgnoreCase) -> Some mode
-      | _ -> None
+    let lookupForColumn (name: string) (kind: ParquetColumnKind) =
+      VirtualLookupRange.resolveSearchColumnLookupRange
+        "Deedle.Virtual.ReadParquet"
+        options.SearchColumn
+        name
+        (kind = ParquetColumnKind.String)
+        (fun () ->
+          let data = fileIndex.ReadTypedColumn<string>(name)
+          let valueAt row =
+            let ov = data.[int row]
+            if ov.HasValue then ov.Value else ""
+          VirtualLookupRange.tryInferStringLookupRange fileIndex.Length valueAt)
     let sources =
       keys
       |> List.map (fun name ->
           let colIdx = fileIndex.FieldIndex name
           let kind = columnKind fields.[colIdx]
-          createTypedColumn fileIndex name kind (lookupForColumn name))
+          createTypedColumn fileIndex name kind (lookupForColumn name kind))
     Virtual.CreateFrame(indexSource, keys, sources)
 
-/// Test-data helpers for B13 benchmarks (Parquet counterpart to `CsvTestData`).
+/// Test-data helpers for Parquet virtual benchmarks (counterpart to `CsvTestData`).
 module ParquetTestData =
   open Deedle.Parquet
 
@@ -357,4 +365,4 @@ module VirtualParquetExtensions =
         { IndexColumn = indexColumn
           SearchColumn = searchCol
           ColumnKeys = columnKeys }
-      ParquetVirtualSource.createFrame path options
+      VirtualParquetSource.createFrame path options

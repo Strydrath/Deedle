@@ -9,7 +9,7 @@ open Deedle.Virtual.Sources
 open Deedle.Parquet
 open Deedle.Parquet.Virtual.Sources
 
-/// B6/B8/B13 — file-backed virtual CSV/Parquet benchmarks vs materialized I/O.
+/// File-backed virtual CSV/Parquet benchmarks vs materialized I/O.
 [<MemoryDiagnoser>]
 [<SimpleJob(warmupCount = 2, iterationCount = 5)>]
 type RealSourceBenchmarks() =
@@ -79,7 +79,7 @@ type RealSourceBenchmarks() =
     member _.MaterializedReadCsv_StatsSum() =
         Stats.sum (materializedFrame.GetColumn<float>("Value")) |> ignore
 
-    /// B13: load + sum — virtual reads only the Value column.
+    /// Load + sum — virtual reads only the Value column.
     [<Benchmark>]
     member _.VirtualParquet_FilterRowsBy_Step() =
         virtualParquetFrame |> Frame.filterRowsBy "Category" searchValue |> ignore
@@ -98,7 +98,7 @@ type RealSourceBenchmarks() =
     member _.VirtualParquet_StatsSum() =
         Stats.sum (ParquetTestData.createFloatValueSeries parquetPath) |> ignore
 
-    /// B13: load + sum — materialized reads the full frame then sums Value.
+    /// Load + sum — materialized reads the full frame then sums Value.
     [<Benchmark>]
     member _.MaterializedReadParquet_StatsSum() =
         let frame = Frame.readParquet parquetPath

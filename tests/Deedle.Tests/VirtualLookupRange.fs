@@ -16,14 +16,15 @@ open FsUnit
 open NUnit.Framework
 open Deedle
 open Deedle.Virtual
+open Deedle.Vectors.Virtual
 open Deedle.Tests.VirtualInstrumentation
 
 // ------------------------------------------------------------------------------------------------
-// B4 — LookupRange quality sensitivity
+// LookupRange quality sensitivity
 // Compare tight Custom/Fixed vs naive full-range vs linear-scan fallback.
 // ------------------------------------------------------------------------------------------------
 
-module private B4 =
+module private LookupRangeFixture =
   let nLarge = 100_000L
   let nTiming = 100_000L
   let searchValue = "lorem"
@@ -68,10 +69,10 @@ module private B4 =
     float sw.ElapsedMilliseconds
 
 // ------------------------------------------------------------------------------------------------
-// B4 profile baseline reporter — writes metrics for all data profiles
+// Profile baseline reporter — writes metrics for all data profiles
 // ------------------------------------------------------------------------------------------------
 
-module B4ProfileReport =
+module LookupRangeProfileReport =
   open System.IO
   open System.Text
 
@@ -88,16 +89,16 @@ module B4ProfileReport =
       ReadValueAt20: int
       FilterMs: float }
 
-  let private n = B4.nLarge
+  let private n = LookupRangeFixture.nLarge
   let private readN = 20
 
   let private runFilter (setup: unit -> AccessCounters * Frame<DateTimeOffset, string> * string * int) =
     let c, frame, search, expected = setup ()
     let filterMs =
-      B4.elapsedMs (fun () ->
+      LookupRangeFixture.elapsedMs (fun () ->
         c.Reset()
         frame |> Frame.filterRowsBy "S2" search |> ignore)
-    let filtered, filterDelta, readDelta = B4.filterBy frame c readN search
+    let filtered, filterDelta, readDelta = LookupRangeFixture.filterBy frame c readN search
     { Profile = ""
       LookupRange = ""
       N = n
@@ -112,16 +113,16 @@ module B4ProfileReport =
 
   let private runOrdinal () =
     let c, frame, words = InstrumentedOrdinalSource.createOrdinalSearchFrame n
-    let expected = B4.expectedMatchCount n words.Length
+    let expected = LookupRangeFixture.expectedMatchCount n words.Length
     let filterMs =
-      B4.elapsedMs (fun () ->
+      LookupRangeFixture.elapsedMs (fun () ->
         c.Reset()
-        frame |> Frame.filterRowsBy "S2" B4.searchValue |> ignore)
-    let filtered, filterDelta, readDelta = B4.filterAndReadOrdinal frame c readN
+        frame |> Frame.filterRowsBy "S2" LookupRangeFixture.searchValue |> ignore)
+    let filtered, filterDelta, readDelta = LookupRangeFixture.filterAndReadOrdinal frame c readN
     { Profile = "Default 8-word (ordinal index)"
       LookupRange = "Step (Custom stride)"
       N = n
-      Search = B4.searchValue
+      Search = LookupRangeFixture.searchValue
       VirtualFilter = FrameProbe.rowIndexIsVirtual filtered
       FilterValueAt = filterDelta.ValueAtCount
       FilterLookupRange = filterDelta.LookupRangeCount
@@ -132,10 +133,10 @@ module B4ProfileReport =
 
   let private runMapped () =
     let c, frame, words = InstrumentedOrdinalSource.createOrderedMappedSearchFrame n
-    let expected = B4.expectedMatchCount n words.Length
-    let search = B4.searchValue.ToUpperInvariant()
+    let expected = LookupRangeFixture.expectedMatchCount n words.Length
+    let search = LookupRangeFixture.searchValue.ToUpperInvariant()
     let filterMs =
-      B4.elapsedMs (fun () ->
+      LookupRangeFixture.elapsedMs (fun () ->
         c.Reset()
         frame |> Frame.filterRowsBy "S2" search |> ignore)
     c.Reset()
@@ -160,13 +161,13 @@ module B4ProfileReport =
 
   let collect () : Row list =
     let words11 = "lorem ipsum dolor sit amet consectetur adipiscing elit".Split(' ')
-    let expected11 = B4.expectedMatchCount n words11.Length
+    let expected11 = LookupRangeFixture.expectedMatchCount n words11.Length
 
     let step11 =
       let r =
         runFilter (fun () ->
           let c, frame, words = InstrumentedOrdinalSource.createOrderedSearchFrame n
-          c, frame, B4.searchValue, B4.expectedMatchCount n words.Length)
+          c, frame, LookupRangeFixture.searchValue, LookupRangeFixture.expectedMatchCount n words.Length)
       { r with Profile = "Default 8-word"; LookupRange = "Step (Custom stride)" }
 
     let exactFixed =
@@ -176,14 +177,14 @@ module B4ProfileReport =
             InstrumentedOrdinalSource.createOrderedSearchFrameWith n (LookupRangeExactFixed (fun v ->
               let o = words11 |> Array.findIndex ((=) v) |> int64
               o, o))
-          c, frame, B4.searchValue, 1)
+          c, frame, LookupRangeFixture.searchValue, 1)
       { r with Profile = "Default 8-word"; LookupRange = "ExactFixed (first hit)" }
 
     let fullFixed =
       let r =
         runFilter (fun () ->
           let c, frame, _ = InstrumentedOrdinalSource.createOrderedSearchFrameWith n LookupRangeFullFixed
-          c, frame, B4.searchValue, int n)
+          c, frame, LookupRangeFixture.searchValue, int n)
       { r with Profile = "Default 8-word"; LookupRange = "FullFixed (naive [0..N-1])" }
 
     let vocab256 =
@@ -191,7 +192,7 @@ module B4ProfileReport =
         runFilter (fun () ->
           let c, frame, words = InstrumentedOrdinalSource.createOrderedSearchFrameLargeVocab n 256
           let search = words.[0]
-          c, frame, search, B4.expectedMatchCount n 256)
+          c, frame, search, LookupRangeFixture.expectedMatchCount n 256)
       { r with Profile = "Large vocab (256 labels)"; LookupRange = "Step (stride 256)" }
 
     let sparseIdx =
@@ -237,111 +238,111 @@ module B4ProfileReport =
     else None
 
 [<Test>]
-let ``B4 profile baseline report writes big-deedle metrics when sibling repo exists`` () =
-  match B4ProfileReport.writeBigDeedleResults() with
+let ``profile baseline report writes big-deedle metrics when sibling repo exists`` () =
+  match LookupRangeProfileReport.writeBigDeedleResults() with
   | Some path ->
       File.Exists(path) |> shouldEqual true
-      B4ProfileReport.collect() |> List.length |> shouldEqual 8
+      LookupRangeProfileReport.collect() |> List.length |> shouldEqual 8
   | None ->
       // Sibling big-deedle/ not present (typical CI) — still verify collect() shape.
-      B4ProfileReport.collect() |> List.length |> shouldEqual 8
+      LookupRangeProfileReport.collect() |> List.length |> shouldEqual 8
 
 [<Test>]
-let ``B4 Step LookupRange filters virtually with zero ValueAt at filter time`` () =
-  let c, frame, words = InstrumentedOrdinalSource.createOrderedSearchFrame B4.nLarge
-  let filtered, filterDelta, _ = B4.filterAndRead frame c 0
+let ``Step LookupRange filters virtually with zero ValueAt at filter time`` () =
+  let c, frame, words = InstrumentedOrdinalSource.createOrderedSearchFrame LookupRangeFixture.nLarge
+  let filtered, filterDelta, _ = LookupRangeFixture.filterAndRead frame c 0
   filterDelta.LookupRangeCount |> shouldEqual 1
   filterDelta.ValueAtCount |> shouldEqual 0
   FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
-  filtered.RowCount |> shouldEqual (B4.expectedMatchCount B4.nLarge words.Length)
+  filtered.RowCount |> shouldEqual (LookupRangeFixture.expectedMatchCount LookupRangeFixture.nLarge words.Length)
 
 [<Test>]
-let ``B4 ExactFixed LookupRange is virtual but only retains first match`` () =
+let ``ExactFixed LookupRange is virtual but only retains first match`` () =
   let words = "lorem ipsum dolor sit amet consectetur adipiscing elit".Split(' ')
   let c, frame, _ =
-    InstrumentedOrdinalSource.createOrderedSearchFrameWith B4.nLarge (LookupRangeExactFixed (fun v ->
+    InstrumentedOrdinalSource.createOrderedSearchFrameWith LookupRangeFixture.nLarge (LookupRangeExactFixed (fun v ->
       let o = words |> Array.findIndex ((=) v) |> int64
       o, o))
-  let filtered, filterDelta, _ = B4.filterAndRead frame c 0
+  let filtered, filterDelta, _ = LookupRangeFixture.filterAndRead frame c 0
   filterDelta.LookupRangeCount |> shouldEqual 1
   filterDelta.ValueAtCount |> shouldEqual 0
   FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
   filtered.RowCount |> shouldEqual 1
 
 [<Test>]
-let ``B4 FullFixed LookupRange is virtual but retains entire series (naive)`` () =
+let ``FullFixed LookupRange is virtual but retains entire series (naive)`` () =
   let c, frame, _ =
-    InstrumentedOrdinalSource.createOrderedSearchFrameWith B4.nLarge LookupRangeFullFixed
-  let filtered, filterDelta, _ = B4.filterAndRead frame c 0
+    InstrumentedOrdinalSource.createOrderedSearchFrameWith LookupRangeFixture.nLarge LookupRangeFullFixed
+  let filtered, filterDelta, _ = LookupRangeFixture.filterAndRead frame c 0
   filterDelta.LookupRangeCount |> shouldEqual 1
   filterDelta.ValueAtCount |> shouldEqual 0
   FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
-  filtered.RowCount |> shouldEqual (int B4.nLarge)
+  filtered.RowCount |> shouldEqual (int LookupRangeFixture.nLarge)
 
 [<Test>]
-let ``B4 Ordinal frame filter uses LookupRange like ordered index`` () =
-  let c, frame, words = InstrumentedOrdinalSource.createOrdinalSearchFrame B4.nLarge
-  let filtered, filterDelta, _ = B4.filterAndReadOrdinal frame c 0
+let ``Ordinal frame filter uses LookupRange like ordered index`` () =
+  let c, frame, words = InstrumentedOrdinalSource.createOrdinalSearchFrame LookupRangeFixture.nLarge
+  let filtered, filterDelta, _ = LookupRangeFixture.filterAndReadOrdinal frame c 0
   filterDelta.LookupRangeCount |> shouldEqual 1
   filterDelta.ValueAtCount |> shouldEqual 0
   FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
-  filtered.RowCount |> shouldEqual (B4.expectedMatchCount B4.nLarge words.Length)
+  filtered.RowCount |> shouldEqual (LookupRangeFixture.expectedMatchCount LookupRangeFixture.nLarge words.Length)
 
 [<Test>]
-let ``B4 Step path reads touch only requested rows after filter`` () =
-  let c, frame, _ = InstrumentedOrdinalSource.createOrderedSearchFrame B4.nLarge
+let ``Step path reads touch only requested rows after filter`` () =
+  let c, frame, _ = InstrumentedOrdinalSource.createOrderedSearchFrame LookupRangeFixture.nLarge
   let readN = 20
-  let _, filterDelta, readDelta = B4.filterAndRead frame c readN
+  let _, filterDelta, readDelta = LookupRangeFixture.filterAndRead frame c readN
   filterDelta.ValueAtCount |> shouldEqual 0
   readDelta.ValueAtCount |> should be (greaterThan 0)
   readDelta.ValueAtCount |> should be (lessThan (readN * 3))
 
 [<Test>]
-let ``B4 FullFixed naive range pays full read cost even for few rows`` () =
+let ``FullFixed naive range pays full read cost even for few rows`` () =
   let c, frame, _ =
-    InstrumentedOrdinalSource.createOrderedSearchFrameWith B4.nLarge LookupRangeFullFixed
+    InstrumentedOrdinalSource.createOrderedSearchFrameWith LookupRangeFixture.nLarge LookupRangeFullFixed
   let readN = 20
-  let filtered, filterDelta, readDelta = B4.filterAndRead frame c readN
+  let filtered, filterDelta, readDelta = LookupRangeFixture.filterAndRead frame c readN
   filterDelta.ValueAtCount |> shouldEqual 0
-  filtered.RowCount |> shouldEqual (int B4.nLarge)
+  filtered.RowCount |> shouldEqual (int LookupRangeFixture.nLarge)
   readDelta.ValueAtCount |> should be (lessThan (readN * 3))
 
 [<Test>]
-let ``B4 Mapped search column without reverse lookup scans at filter time`` () =
-  let c, frame, words = InstrumentedOrdinalSource.createOrderedMappedSearchFrame B4.nLarge
+let ``Mapped search column without reverse lookup scans at filter time`` () =
+  let c, frame, words = InstrumentedOrdinalSource.createOrderedMappedSearchFrame LookupRangeFixture.nLarge
   c.Reset()
-  let filtered = frame |> Frame.filterRowsBy "S2" (B4.searchValue.ToUpperInvariant())
+  let filtered = frame |> Frame.filterRowsBy "S2" (LookupRangeFixture.searchValue.ToUpperInvariant())
   let d = c.Snapshot()
   d.LookupRangeCount |> shouldEqual 0
-  d.ValueAtCount |> should be (greaterThanOrEqualTo (int B4.nLarge))
+  d.ValueAtCount |> should be (greaterThanOrEqualTo (int LookupRangeFixture.nLarge))
   FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
-  filtered.RowCount |> shouldEqual (B4.expectedMatchCount B4.nLarge words.Length)
+  filtered.RowCount |> shouldEqual (LookupRangeFixture.expectedMatchCount LookupRangeFixture.nLarge words.Length)
 
 [<Test>]
-let ``B4 Ordinal Step filter is same order of magnitude as ordered Step filter`` () =
+let ``Ordinal Step filter is same order of magnitude as ordered Step filter`` () =
   let orderedMs =
-    B4.elapsedMs (fun () ->
-      let c, frame, _ = InstrumentedOrdinalSource.createOrderedSearchFrame B4.nTiming
+    LookupRangeFixture.elapsedMs (fun () ->
+      let c, frame, _ = InstrumentedOrdinalSource.createOrderedSearchFrame LookupRangeFixture.nTiming
       c.Reset()
-      frame |> Frame.filterRowsBy "S2" B4.searchValue |> ignore)
+      frame |> Frame.filterRowsBy "S2" LookupRangeFixture.searchValue |> ignore)
   let ordinalMs =
-    B4.elapsedMs (fun () ->
-      let c, frame, _ = InstrumentedOrdinalSource.createOrdinalSearchFrame B4.nTiming
+    LookupRangeFixture.elapsedMs (fun () ->
+      let c, frame, _ = InstrumentedOrdinalSource.createOrdinalSearchFrame LookupRangeFixture.nTiming
       c.Reset()
-      frame |> Frame.filterRowsBy "S2" B4.searchValue |> ignore)
+      frame |> Frame.filterRowsBy "S2" LookupRangeFixture.searchValue |> ignore)
   ordinalMs |> should be (lessThan (max 50.0 (orderedMs * 5.0)))
 
 [<Test>]
-let ``B4 Ordinal Step filter plus partial read matches ordered cost order`` () =
+let ``Ordinal Step filter plus partial read matches ordered cost order`` () =
   let orderedMs =
-    B4.elapsedMs (fun () ->
-      let c, frame, _ = InstrumentedOrdinalSource.createOrderedSearchFrame B4.nTiming
-      let filtered, _, _ = B4.filterAndRead frame c 50
+    LookupRangeFixture.elapsedMs (fun () ->
+      let c, frame, _ = InstrumentedOrdinalSource.createOrderedSearchFrame LookupRangeFixture.nTiming
+      let filtered, _, _ = LookupRangeFixture.filterAndRead frame c 50
       filtered.RowCount |> ignore)
   let ordinalMs =
-    B4.elapsedMs (fun () ->
-      let c, frame, _ = InstrumentedOrdinalSource.createOrdinalSearchFrame B4.nTiming
-      let filtered, _, _ = B4.filterAndReadOrdinal frame c 50
+    LookupRangeFixture.elapsedMs (fun () ->
+      let c, frame, _ = InstrumentedOrdinalSource.createOrdinalSearchFrame LookupRangeFixture.nTiming
+      let filtered, _, _ = LookupRangeFixture.filterAndReadOrdinal frame c 50
       filtered.RowCount |> ignore)
   ordinalMs |> should be (lessThan (max 50.0 (orderedMs * 5.0)))
 
@@ -350,36 +351,78 @@ let ``B4 Ordinal Step filter plus partial read matches ordered cost order`` () =
 // ------------------------------------------------------------------------------------------------
 
 [<Test>]
-let ``B4 Large vocabulary periodic data works with Step LookupRange`` () =
+let ``Large vocabulary periodic data works with Step LookupRange`` () =
   let vocabSize = 256
-  let c, frame, words = InstrumentedOrdinalSource.createOrderedSearchFrameLargeVocab B4.nLarge vocabSize
+  let c, frame, words = InstrumentedOrdinalSource.createOrderedSearchFrameLargeVocab LookupRangeFixture.nLarge vocabSize
   let search = words.[0]
-  let filtered, filterDelta, _ = B4.filterBy frame c 0 search
+  let filtered, filterDelta, _ = LookupRangeFixture.filterBy frame c 0 search
   filterDelta.ValueAtCount |> shouldEqual 0
   filterDelta.LookupRangeCount |> shouldEqual 1
   FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
-  filtered.RowCount |> shouldEqual (B4.expectedMatchCount B4.nLarge vocabSize)
+  filtered.RowCount |> shouldEqual (LookupRangeFixture.expectedMatchCount LookupRangeFixture.nLarge vocabSize)
 
 [<Test>]
-let ``B4 Sparse irregular matches work with IndexList LookupRange`` () =
+let ``Sparse irregular matches work with IndexList LookupRange`` () =
   let modulus = 997L
   let remainder = 42L
-  let c, frame, trueCount = InstrumentedOrdinalSource.createOrderedSearchFrameSparse B4.nLarge modulus remainder
-  let filtered, filterDelta, _ = B4.filterBy frame c 0 "lorem"
+  let c, frame, trueCount = InstrumentedOrdinalSource.createOrderedSearchFrameSparse LookupRangeFixture.nLarge modulus remainder
+  let filtered, filterDelta, _ = LookupRangeFixture.filterBy frame c 0 "lorem"
   filterDelta.ValueAtCount |> shouldEqual 0
   filterDelta.LookupRangeCount |> shouldEqual 1
   FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
   filtered.RowCount |> shouldEqual trueCount
-  trueCount |> should be (lessThan (int B4.nLarge / 100))
+  trueCount |> should be (lessThan (int LookupRangeFixture.nLarge / 100))
 
 [<Test>]
-let ``B4 Wrong Step on sparse data over-filters virtual index`` () =
+let ``Wrong Step on sparse data over-filters virtual index`` () =
   let modulus = 997L
   let remainder = 42L
-  let c, frame, trueCount = InstrumentedOrdinalSource.createOrderedSearchFrameSparseWrongStep B4.nLarge modulus remainder
-  let filtered, filterDelta, _ = B4.filterBy frame c 0 "lorem"
+  let c, frame, trueCount = InstrumentedOrdinalSource.createOrderedSearchFrameSparseWrongStep LookupRangeFixture.nLarge modulus remainder
+  let filtered, filterDelta, _ = LookupRangeFixture.filterBy frame c 0 "lorem"
   filterDelta.ValueAtCount |> shouldEqual 0
   FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
   filtered.RowCount |> should be (greaterThan trueCount)
   // Wrong Step (period 11 from offset 42) keeps ~N/11 rows, not the ~N/997 true matches
-  filtered.RowCount |> should be (greaterThan (int B4.nLarge / 200))
+  filtered.RowCount |> should be (greaterThan (int LookupRangeFixture.nLarge / 200))
+
+[<Test>]
+let ``clipLookupRange remaps IndexList after Fixed slice`` () =
+  let modulus = 997L
+  let remainder = 42L
+  let n = 10_000L
+  let _, frame, trueCount = InstrumentedOrdinalSource.createOrderedSearchFrameSparse n modulus remainder
+  let filtered = frame |> Frame.filterRowsBy "S2" "lorem"
+  filtered.RowCount |> shouldEqual trueCount
+  let filtered2 = filtered |> Frame.filterRowsBy "S2" "lorem"
+  filtered2.RowCount |> shouldEqual trueCount
+  FrameProbe.rowIndexIsVirtual filtered2 |> shouldEqual true
+
+[<Test>]
+let ``ordinal and ordered Step filters return the same row count`` () =
+  let n = 10_000L
+  let search = "lorem"
+  let _, ordered, _ = InstrumentedOrdinalSource.createOrderedSearchFrame n
+  let _, ordinal, _ = InstrumentedOrdinalSource.createOrdinalSearchFrame n
+  let orderedCount = (ordered |> Frame.filterRowsBy "S2" search).RowCount
+  let ordinalCount = (ordinal |> Frame.filterRowsBy "S2" search).RowCount
+  ordinalCount |> shouldEqual orderedCount
+  ordinalCount |> shouldEqual (int ((n - 1L) / int64 8) + 1)
+
+[<Test>]
+let ``ordinal filterRowsBy without LookupRange throws NotSupportedException`` () =
+  let words = "lorem ipsum dolor sit amet".Split(' ')
+  let c = AccessCounters()
+  let s2 = InstrumentedOrdinalSource<string>(100L, (fun i -> words.[int (i % int64 words.Length)]), c, hasMissing=false)
+  let _, s1 = InstrumentedOrdinalSource.createLongs 100L
+  let frame = Virtual.CreateOrdinalFrame(["S1"; "S2"], [s1 :> IVirtualVectorSource; s2 :> IVirtualVectorSource])
+  (fun () -> frame |> Frame.filterRowsBy "S2" "lorem" |> ignore)
+  |> should throw typeof<NotSupportedException>
+
+[<Test>]
+let ``filterRowsBy on ordinal row index uses LookupRange when configured`` () =
+  let c, frame, words = InstrumentedOrdinalSource.createOrdinalSearchFrame 1000L
+  c.Reset()
+  let filtered = frame |> Frame.filterRowsBy "S2" words.[0]
+  FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
+  c.Snapshot().LookupRangeCount |> should be (greaterThan 0)
+  c.Snapshot().ValueAtCount |> shouldEqual 0

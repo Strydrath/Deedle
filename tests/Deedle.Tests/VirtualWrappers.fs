@@ -28,7 +28,7 @@ let private customCount (range: RangeRestriction<Address>) =
   | RangeRestriction.Start n | RangeRestriction.End n -> int n
 
 [<Test>]
-let ``B10 Boxed LookupRange delegates to the inner source`` () =
+let ``Boxed LookupRange delegates to the inner source`` () =
   let words = [| "lorem"; "ipsum"; "dolor" |]
   let c, src = InstrumentedOrdinalSource.createSearchableStrings 30L words
   c.Reset()
@@ -37,7 +37,7 @@ let ``B10 Boxed LookupRange delegates to the inner source`` () =
   c.Snapshot().LookupRangeCount |> shouldEqual 1
 
 [<Test>]
-let ``B10 Mapped LookupRange without reverse mapping scans and stays virtual`` () =
+let ``Mapped LookupRange without reverse mapping scans and stays virtual`` () =
   let n = 64L
   let words = "lorem ipsum dolor sit amet".Split(' ')
   let c = AccessCounters()
@@ -61,7 +61,7 @@ let ``B10 Mapped LookupRange without reverse mapping scans and stays virtual`` (
   snap.LookupRangeCount |> shouldEqual 0
 
 [<Test>]
-let ``B10 Combined LookupRange scans instead of throwing`` () =
+let ``Combined LookupRange scans instead of throwing`` () =
   let c, s1 = InstrumentedOrdinalSource.createFloats 16L
   let s2 = InstrumentedOrdinalSource<float>(16L, (fun i -> float (i + 1L)), c)
   let combined =
@@ -74,7 +74,7 @@ let ``B10 Combined LookupRange scans instead of throwing`` () =
   customCount range |> shouldEqual 1
 
 [<Test>]
-let ``B10 Row-reader LookupRange does not throw`` () =
+let ``Row-reader LookupRange does not throw`` () =
   let _, s1 = InstrumentedOrdinalSource.createFloats 8L
   let irt =
     { new IRowReaderTransform with
@@ -88,7 +88,7 @@ let ``B10 Row-reader LookupRange does not throw`` () =
   customCount (reader.LookupRange(Unchecked.defaultof<_>)) |> shouldEqual 0
 
 [<Test>]
-let ``B10 FillMissingWith constant stays virtual`` () =
+let ``FillMissingWith constant stays virtual`` () =
   let c = AccessCounters()
   let src = InstrumentedOrdinalSource<float>(32L, float, c, hasMissing=true)
   let s = Virtual.CreateOrdinalSeries(src)
@@ -99,7 +99,7 @@ let ``B10 FillMissingWith constant stays virtual`` () =
   filled.TryGet(1L) |> shouldEqual (OptionalValue 1.0)
 
 [<Test>]
-let ``B10 FillMissing direction stays virtual and copies the previous value`` () =
+let ``FillMissing direction stays virtual and copies the previous value`` () =
   let c = AccessCounters()
   let src = InstrumentedOrdinalSource<float>(32L, float, c, hasMissing=true)
   let s = Virtual.CreateOrdinalSeries(src)
@@ -108,14 +108,14 @@ let ``B10 FillMissing direction stays virtual and copies the previous value`` ()
   filled.TryGet(3L) |> shouldEqual (OptionalValue 2.0)
 
 [<Test>]
-let ``B10 AsyncMaterialize on a virtual series succeeds with a linear result`` () =
+let ``AsyncMaterialize on a virtual series succeeds with a linear result`` () =
   let _, s = InstrumentedOrdinalSource.createOrdinalSeries 32L
   let mat = s.AsyncMaterialize() |> Async.RunSynchronously
   SeriesProbe.isLinear mat |> shouldEqual true
   mat.TryGet(7L) |> shouldEqual (OptionalValue 7L)
 
 [<Test>]
-let ``B10 AsyncBuild with a virtual scheme raises NotSupportedException`` () =
+let ``AsyncBuild with a virtual scheme raises NotSupportedException`` () =
   let _, s = InstrumentedOrdinalSource.createOrdinalSeries 8L
   let ex =
     Assert.Throws<NotSupportedException>(fun () ->

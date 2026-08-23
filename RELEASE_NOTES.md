@@ -6,7 +6,7 @@
 
 - **`Virtual.ReadCsv`**: load a CSV file as a virtual `Frame` with an ordered index column (auto-detects `Timestamp` / `DateTime` when present). Empty / `NA`-style cells become missing values; quoted fields with commas are supported.
 - **`VirtualLookupRange` helpers**: `forRepeatingCycle`, `forCategorical`, `forCategoricalScan`, and `scan` for configuring searchable string columns on virtual sources. Unknown cycle values yield an empty filter range (no throw).
-- **CSV virtual backend** (`Deedle.Virtual.Sources`): `CsvLineIndex`, `CsvVirtualSource`, and `CsvTestData` helpers for file-backed Big Deedle experiments.
+- **CSV virtual backend** (`Deedle.Virtual.Sources`): `CsvLineIndex`, `VirtualCsvSource`, and `CsvTestData` helpers for file-backed Big Deedle experiments.
 - **`Frame.filterRowsBy2`**: intersect two column predicates in one virtual `LookupRange` / `GetSubVector` pass (falls back to sequential `filterRowsBy` on linear frames).
 - **Virtual `Series.shift` / `Series.diff` / `Series.pctChange`**: stay on the virtual addressing scheme (no full materialize). `Frame.shift` / `Frame.diff` / `Frame.pctChange` use the frame's vector builder so virtual columns stay virtual.
 - **Virtual fixed windows**: `Series.windowSize` / `chunkSize` build nested window series via `GetAddressRange` (virtual slices). Aggregating those windows still materializes the result series of scalars.
@@ -21,6 +21,7 @@
 - **Filter without `LookupRange`:** virtual `filterRowsBy` on an unconfigured search column raises **`NotSupportedException`** with setup guidance (instead of a generic failure or full scan).
 - **`VirtualFrameDiagnostics`:** read-only helpers to inspect virtual row index kind, column virtuality, and scheme id.
 - **`Virtual.ReadCsv` LookupRange inference:** when `searchColumn` is set without `searchLookupRange`, low-cardinality string columns (≤64 distinct values) are inferred once at load time.
+- **`Virtual.ReadParquet` LookupRange inference (B19):** same inference as CSV for string search columns when `searchLookupRange` is omitted.
 - **`clipLookupRange`:** remaps Step/IndexList modes after Fixed slices. Prefer **`filterRowsBy2`** for two predicates on the same Step column.
 - **Virtual ordered slices / `Series.diff` / `Series.shift`:** ordered `GetAddressRange` / `GetRange` reindex onto linear `0..n-1` addresses so absolute-address partitioned sources align (fixes zero diffs on BigDeedle Ranges backends).
 

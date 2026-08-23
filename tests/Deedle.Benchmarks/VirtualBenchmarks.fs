@@ -7,7 +7,7 @@ open Deedle.Virtual
 open Deedle.Vectors.Virtual
 open Deedle.Tests.VirtualInstrumentation
 
-/// BenchmarkDotNet suite for Big Deedle synthetic virtual workloads (B5).
+/// BenchmarkDotNet suite for synthetic virtual workloads.
 /// Pairs with access-count experiments in VirtualOpMatrix / VirtualLookupRange.
 [<MemoryDiagnoser>]
 [<SimpleJob(warmupCount = 2, iterationCount = 5)>]
@@ -76,7 +76,7 @@ type VirtualBenchmarks() =
         joinLeft <- Virtual.CreateOrdinalFrame(["A"], [leftCol :> IVirtualVectorSource])
         joinRight <- Virtual.CreateOrdinalFrame(["B"], [rightCol :> IVirtualVectorSource])
 
-    // --- Filter (B4 profiles) -----------------------------------------------------------------
+    // --- Filter (LookupRange profiles) ----------------------------------------------------------
 
     /// Ordered index + Step LookupRange — virtual filter, no full scan.
     [<Benchmark(Baseline = true)>]
@@ -93,7 +93,7 @@ type VirtualBenchmarks() =
     member _.FilterRowsBy_OrderedFullFixed() =
         orderedFullFixedFrame |> Frame.filterRowsBy "S2" searchValue |> ignore
 
-    /// Ordinal index + Step LookupRange on search column — same fast path as ordered (B14 fix).
+    /// Ordinal index + Step LookupRange on search column — same fast path as ordered.
     [<Benchmark>]
     member _.FilterRowsBy_OrdinalStep() =
         ordinalFrame |> Frame.filterRowsBy "S2" searchValue |> ignore
@@ -122,7 +122,7 @@ type VirtualBenchmarks() =
             if int64 i < filtered.RowIndex.KeyCount then
                 filtered?S1.GetAt(i) |> ignore
 
-    // --- Series virtual ops (B3 matrix) -------------------------------------------------------
+    // --- Series virtual ops (virtualization matrix) ---------------------------------------------
 
     [<Benchmark>]
     member _.Slice_VirtualSeries() =

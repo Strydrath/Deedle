@@ -18,8 +18,7 @@ open Deedle.Vectors.Virtual
 open Deedle.Tests.VirtualInstrumentation
 
 // ------------------------------------------------------------------------------------------------
-// B3 — Operation virtualization matrix
-// Assert B1 classifications with VirtualInstrumentation (scheme + access deltas).
+// Operation virtualization matrix — scheme + access deltas via VirtualInstrumentation.
 // ------------------------------------------------------------------------------------------------
 
 module private Op =
@@ -34,7 +33,7 @@ module private Op =
 // ------------------------------------------------------------------------------------------------
 
 [<Test>]
-let ``B3 Slice preserves virtual storage without ValueAt`` () =
+let ``Slice preserves virtual storage without ValueAt`` () =
   let c, s = InstrumentedOrdinalSource.createOrdinalSeries Op.nMed
   c.Reset()
   let sliced = s.[100L .. 199L]
@@ -45,7 +44,7 @@ let ``B3 Slice preserves virtual storage without ValueAt`` () =
   sliced.KeyCount |> shouldEqual 100
 
 [<Test>]
-let ``B3 Lookup preserves virtual storage and touches one ValueAt`` () =
+let ``Lookup preserves virtual storage and touches one ValueAt`` () =
   let c, s = InstrumentedOrdinalSource.createOrdinalSeries Op.nMed
   c.Reset()
   s.TryGet(12345L) |> shouldEqual (OptionalValue 12345L)
@@ -54,7 +53,7 @@ let ``B3 Lookup preserves virtual storage and touches one ValueAt`` () =
   Op.assertVirtual s
 
 [<Test>]
-let ``B3 Metadata KeyCount is virtual and zero ValueAt`` () =
+let ``Metadata KeyCount is virtual and zero ValueAt`` () =
   let c, s = InstrumentedOrdinalSource.createOrdinalSeries Op.nMed
   c.Reset()
   s.KeyCount |> shouldEqual (int Op.nMed)
@@ -62,7 +61,7 @@ let ``B3 Metadata KeyCount is virtual and zero ValueAt`` () =
   Op.assertVirtual s
 
 [<Test>]
-let ``B3 SelectValues preserves virtual storage without ValueAt`` () =
+let ``SelectValues preserves virtual storage without ValueAt`` () =
   let c, s = InstrumentedOrdinalSource.createFloatSeries Op.nMed
   c.Reset()
   let mapped = s |> Series.mapValues (fun v -> v + 1.0)
@@ -71,7 +70,7 @@ let ``B3 SelectValues preserves virtual storage without ValueAt`` () =
   Op.assertVirtual mapped
 
 [<Test>]
-let ``B3 Merge of ordinal virtual slices preserves virtual storage`` () =
+let ``Merge of ordinal virtual slices preserves virtual storage`` () =
   let c, s = InstrumentedOrdinalSource.createOrdinalSeries Op.nMed
   let a = s.[0L .. 99L]
   let b = s.[200L .. 299L]
@@ -84,7 +83,7 @@ let ``B3 Merge of ordinal virtual slices preserves virtual storage`` () =
   merged.KeyCount |> shouldEqual 200
 
 [<Test>]
-let ``B3 Ordered filterRowsBy preserves virtual row index via LookupRange`` () =
+let ``Ordered filterRowsBy preserves virtual row index via LookupRange`` () =
   let c, (f: Frame<DateTimeOffset, string>), _ = InstrumentedOrdinalSource.createOrderedSearchFrame Op.nMed
   c.Reset()
   let filtered = f |> Frame.filterRowsBy "S2" "lorem"
@@ -95,7 +94,7 @@ let ``B3 Ordered filterRowsBy preserves virtual row index via LookupRange`` () =
   filtered.RowCount |> should be (greaterThan 0)
 
 [<Test>]
-let ``B3 sampleTimeInto keeps chunks virtual and does not scan the series`` () =
+let ``sampleTimeInto keeps chunks virtual and does not scan the series`` () =
   let c, s = InstrumentedOrdinalSource.createOrderedFloatSeries Op.nMed
   c.Reset()
   let sampled = s |> Series.sampleTimeInto (TimeSpan.FromDays 365.0) Direction.Forward id
@@ -111,7 +110,7 @@ let ``B3 sampleTimeInto keeps chunks virtual and does not scan the series`` () =
 // ------------------------------------------------------------------------------------------------
 
 [<Test>]
-let ``B3 GroupBy materializes to linear storage`` () =
+let ``GroupBy materializes to linear storage`` () =
   let c, s = InstrumentedOrdinalSource.createFloatSeries Op.nSmall
   let grouped = s |> Series.groupBy (fun _k v -> int v % 10)
   // Nested series values are built under linear builders for virtual sources.
@@ -120,7 +119,7 @@ let ``B3 GroupBy materializes to linear storage`` () =
   c.Snapshot().ValueAtCount |> should be (greaterThan 0)
 
 [<Test>]
-let ``B3 WindowSize keeps nested window series virtual`` () =
+let ``WindowSize keeps nested window series virtual`` () =
   let _, s = InstrumentedOrdinalSource.createFloatSeries 1_000L
   let windows = s |> Series.windowSizeInto (5, Boundary.Skip) DataSegment.data
   let first = windows.GetAt(0)
@@ -128,13 +127,13 @@ let ``B3 WindowSize keeps nested window series virtual`` () =
   first.KeyCount |> shouldEqual 5
 
 [<Test>]
-let ``B3 Window aggregate of sums materializes the result series`` () =
+let ``Window aggregate of sums materializes the result series`` () =
   let _, s = InstrumentedOrdinalSource.createFloatSeries 1_000L
   let windows = s |> Series.windowSizeInto (5, Boundary.AtEnding) (fun w -> Stats.sum w.Data)
   Op.assertLinear windows
 
 [<Test>]
-let ``B3 Shift preserves virtual storage without ValueAt`` () =
+let ``Shift preserves virtual storage without ValueAt`` () =
   let c, s = InstrumentedOrdinalSource.createFloatSeries Op.nSmall
   c.Reset()
   let shifted = s |> Series.shift 1
@@ -144,7 +143,7 @@ let ``B3 Shift preserves virtual storage without ValueAt`` () =
   shifted.[1L] |> shouldEqual s.[0L]
 
 [<Test>]
-let ``B3 Slice then Stats.sum pulls only the slice`` () =
+let ``Slice then Stats.sum pulls only the slice`` () =
   let c, s = InstrumentedOrdinalSource.createFloatSeries Op.nMed
   let sliced = s.[100L .. 199L]
   c.Reset()
@@ -152,7 +151,7 @@ let ``B3 Slice then Stats.sum pulls only the slice`` () =
   c.Snapshot().ValueAtCount |> shouldEqual 100
 
 [<Test>]
-let ``B3 DropMissing stays virtual after a presence scan`` () =
+let ``DropMissing stays virtual after a presence scan`` () =
   let c = AccessCounters()
   let src =
     InstrumentedOrdinalSource<float>(Op.nSmall, float, c, hasMissing=true)
@@ -163,14 +162,14 @@ let ``B3 DropMissing stays virtual after a presence scan`` () =
   c.Snapshot().ValueAtCount |> should be (greaterThan 0)
 
 [<Test>]
-let ``B3 SortBy materializes to linear storage`` () =
+let ``SortBy materializes to linear storage`` () =
   let c, s = InstrumentedOrdinalSource.createFloatSeries 1_000L
   let sorted = s |> Series.sortBy (fun v -> -v)
   Op.assertLinear sorted
   c.Snapshot().ValueAtCount |> should be (greaterThan 0)
 
 [<Test>]
-let ``B3 SortByKey on already-ordered virtual series is a no-op`` () =
+let ``SortByKey on already-ordered virtual series is a no-op`` () =
   let c, s = InstrumentedOrdinalSource.createFloatSeries 1_000L
   c.Reset()
   let sorted = s |> Series.sortByKey
@@ -179,7 +178,7 @@ let ``B3 SortByKey on already-ordered virtual series is a no-op`` () =
   sorted.KeyCount |> shouldEqual s.KeyCount
 
 [<Test>]
-let ``B3 Intersect of (key, value) pairs materializes to linear storage`` () =
+let ``Intersect of (key, value) pairs materializes to linear storage`` () =
   let _, s = InstrumentedOrdinalSource.createOrdinalSeries Op.nSmall
   let a = s.[0L .. 500L]
   let b = s.[250L .. 750L]
@@ -187,14 +186,14 @@ let ``B3 Intersect of (key, value) pairs materializes to linear storage`` () =
   Op.assertLinear inter
 
 [<Test>]
-let ``B3 ZipAlign of identical ordinal virtual series stays virtual`` () =
+let ``ZipAlign of identical ordinal virtual series stays virtual`` () =
   let _, s1 = InstrumentedOrdinalSource.createFloatSeries Op.nSmall
   let _, s2 = InstrumentedOrdinalSource.createFloatSeries Op.nSmall
   let zipped = Series.zipAlign JoinKind.Inner Lookup.Exact s1 s2
   Op.assertVirtual zipped
 
 [<Test>]
-let ``B3 Frame join of identical ordinal virtual frames stays virtual`` () =
+let ``Frame join of identical ordinal virtual frames stays virtual`` () =
   let _, s1 = InstrumentedOrdinalSource.createFloats Op.nSmall
   let _, s2 = InstrumentedOrdinalSource.createFloats Op.nSmall
   let f1 = Virtual.CreateOrdinalFrame(["A"], [s1 :> IVirtualVectorSource])
@@ -203,7 +202,7 @@ let ``B3 Frame join of identical ordinal virtual frames stays virtual`` () =
   FrameProbe.rowIndexIsVirtual joined |> shouldEqual true
 
 [<Test>]
-let ``B3 Stats.sum pulls values proportional to length (materializing pull)`` () =
+let ``Stats.sum pulls values proportional to length (materializing pull)`` () =
   let c, s = InstrumentedOrdinalSource.createFloatSeries Op.nSmall
   c.Reset()
   Stats.sum s |> ignore
@@ -211,7 +210,7 @@ let ``B3 Stats.sum pulls values proportional to length (materializing pull)`` ()
   d.ValueAtCount |> shouldEqual (int Op.nSmall)
 
 [<Test>]
-let ``B3 Materialize flips series to linear`` () =
+let ``Materialize flips series to linear`` () =
   let c, s = InstrumentedOrdinalSource.createOrdinalSeries 500L
   Op.assertVirtual s
   let mat = s.Materialize()
@@ -223,7 +222,7 @@ let ``B3 Materialize flips series to linear`` () =
 // ------------------------------------------------------------------------------------------------
 
 [<Test>]
-let ``B3 Ordinal filterRowsBy preserves virtual row index via LookupRange`` () =
+let ``Ordinal filterRowsBy preserves virtual row index via LookupRange`` () =
   let words = "lorem ipsum dolor sit amet".Split(' ')
   let c, s2 = InstrumentedOrdinalSource.createSearchableStrings Op.nSmall words
   let _, s1 = InstrumentedOrdinalSource.createLongs Op.nSmall
@@ -237,18 +236,7 @@ let ``B3 Ordinal filterRowsBy preserves virtual row index via LookupRange`` () =
   filtered.RowCount |> should be (greaterThan 0)
 
 [<Test>]
-let ``B3 Ordinal filterRowsBy without LookupRange throws NotSupportedException`` () =
-  let words = "lorem ipsum dolor sit amet".Split(' ')
-  let c = AccessCounters()
-  let valueAt i = words.[int (i % int64 words.Length)]
-  let s2 = InstrumentedOrdinalSource<string>(Op.nSmall, valueAt, c, hasMissing=false)
-  let _, s1 = InstrumentedOrdinalSource.createLongs Op.nSmall
-  let f = Virtual.CreateOrdinalFrame(["S1"; "S2"], [s1 :> IVirtualVectorSource; s2 :> IVirtualVectorSource])
-  (fun () -> f |> Frame.filterRowsBy "S2" "lorem" |> ignore)
-  |> should throw typeof<NotSupportedException>
-
-[<Test>]
-let ``B3 FillMissing under virtual scheme stays virtual`` () =
+let ``FillMissing under virtual scheme stays virtual`` () =
   let c = AccessCounters()
   let src = InstrumentedOrdinalSource<float>(1_000L, float, c, hasMissing=true)
   let s = Virtual.CreateOrdinalSeries(src)
