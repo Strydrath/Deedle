@@ -15,6 +15,10 @@ open Deedle.VectorHelpers
 open Deedle.Internal
 open System.Runtime.CompilerServices
 
+module private LinAddr =
+  let inline asInt64 x = LinearAddress.asInt64 x
+  let inline ofInt64 x = LinearAddress.ofInt64 x
+
 
 /// A helper type used by non-generic `IVirtualVectorSource` to invoke generic
 /// operations that require generic `IVirtualVectorSource<'T>` as an argument.
@@ -158,6 +162,31 @@ module VirtualVectorSource =
     abstract Source : IVirtualVectorSource<'T>
     abstract Function : unit // TODO: Check that the applied function is the same
 
+  /// Marks a source reindexed onto contiguous linear addresses `0 .. Length-1`.
+  /// Used by virtual `Shift`/`Diff` so absolute-address backends (partitioned Ranges)
+  /// align the same way as remapping ordinal/CSV sources.
+  type ILinearAddressedSource<'T> =
+    abstract Source : IVirtualVectorSource<'T>
+
+  /// Linear `0 .. length-1` address ops with structural equality (needed by Combine uniqueBy).
+  type ContiguousLinearAddressOperations(length: int64) =
+    let hi = max 0L (length - 1L)
+    member _.Length = length
+    override _.GetHashCode() = hash length
+    override _.Equals(other) =
+      match other with
+      | :? ContiguousLinearAddressOperations as o -> o.Length = length
+      | _ -> false
+    interface IAddressOperations with
+      member _.FirstElement = LinAddr.ofInt64 0L
+      member _.LastElement = LinAddr.ofInt64 hi
+      member _.AddressOf(offset) = LinAddr.ofInt64 offset
+      member _.OffsetOf(addr) = LinAddr.asInt64 addr
+      member _.AdjustBy(addr, offset) = LinAddr.ofInt64 (LinAddr.asInt64 addr + offset)
+      member _.Range =
+        if length <= 0L then Seq.empty
+        else seq { for i in 0L .. hi -> LinAddr.ofInt64 i }
+
   let private nonExactLookupMessage =
     "Non-exact LookupValue is not supported on this virtual wrapper. " +
     "Use Lookup.Exact, provide a reverse mapping, or call Series.Materialize() first."
@@ -199,6 +228,57 @@ module VirtualVectorSource =
       |> OptionalValue.ofOption
     else
       raise (NotSupportedException(nonExactLookupMessage))
+
+  /// Reindex a virtual source onto linear addresses `0L .. Length-1L`.
+  /// Used after ordered `GetSubVector` / `GetRange` so absolute-address backends
+  /// (partitioned Ranges) share the same address space as remapping ordinal sources.
+  /// No-op when the source is already linearly addressed from 0.
+  let rec withLinearAddressing (source: IVirtualVectorSource<'T>) : IVirtualVectorSource<'T> =
+    let length = source.Length
+    let ops = source.AddressOperations
+    let alreadyLinear =
+      match source with
+      | :? ILinearAddressedSource<'T> -> true
+      | _ when length = 0L -> true
+      | _ ->
+          ops.FirstElement = LinAddr.ofInt64 0L &&
+          ops.LastElement = LinAddr.ofInt64 (length - 1L) &&
+          ops.AddressOf(0L) = LinAddr.ofInt64 0L
+    if alreadyLinear then source
+    else
+      let toUnderlying addr = ops.AddressOf(LinAddr.asInt64 addr)
+      let toLinear addr = LinAddr.ofInt64 (ops.OffsetOf(addr))
+      let addressing = ContiguousLinearAddressOperations(length) :> IAddressOperations
+      { new IVirtualVectorSource<'T> with
+          member _.ValueAt(loc) =
+            let i = LinAddr.asInt64 loc.Address
+            source.ValueAt(KnownLocation(toUnderlying loc.Address, i))
+          member _.LookupRange(search) =
+            source.LookupRange(search) |> RangeRestriction.map toLinear
+          member _.LookupValue(v, lookup, check) =
+            let checkUnderlying = Func<Address, bool>(fun addr -> check.Invoke(toLinear addr))
+            source.LookupValue(v, lookup, checkUnderlying)
+            |> OptionalValue.map (fun (value, addr) -> value, toLinear addr)
+          member _.GetSubVector(range) =
+            withLinearAddressing (source.GetSubVector(RangeRestriction.map toUnderlying range))
+          member _.MergeWith(sources) =
+            let inners =
+              source ::
+              [ for s in sources ->
+                  match s with
+                  | :? ILinearAddressedSource<'T> as w -> w.Source
+                  | other -> other ]
+            match inners with
+            | h :: t -> withLinearAddressing (h.MergeWith(t))
+            | [] -> failwith "withLinearAddressing.MergeWith: empty"
+        interface ILinearAddressedSource<'T> with
+          member _.Source = source
+        interface IVirtualVectorSource with
+          member _.AddressingSchemeID = source.AddressingSchemeID
+          member _.ElementType = typeof<'T>
+          member _.Length = length
+          member _.AddressOperations = addressing
+          member x.Invoke(op) = op.Invoke(x :?> IVirtualVectorSource<'T>) }
 
   /// Creates a new vector source that boxes all values
   /// The result also implements IBoxedVectorSource
@@ -559,7 +639,9 @@ type VirtualVectorBuilder() =
             | vector & (:? VirtualVector<'T> as source) when
                   // Also make sure that the addressing scheme is the same (if it is specified)
                   schemeOpt = None || Some(vector.AddressingScheme) = schemeOpt ->
-                let subSource = source.Source.GetSubVector(range)
+                // Normalize absolute-address slices onto 0..n-1 so Shift/Diff Combine aligns.
+                let subSource =
+                  VirtualVectorSource.withLinearAddressing (source.Source.GetSubVector(range))
                 VirtualVector<'T>(subSource) :> IVector<'T>
             | _ ->
                 failwith "VirtualVectorBuilder.Build: GetRange - vector does not use matching virtual addressing"

@@ -398,9 +398,14 @@ let ``Merging series sub-ranges works as expected`` () =
   let merged = y15a.Merge(y17b, y15b, y17a)
 
   // Merging correctly joins adjacent ranges (the above is just 2 blocks)
-  let ranges =
-    ((merged.Index :?> Deedle.Indices.Virtual.VirtualOrderedIndex<DateTimeOffset>).Source
-      :?> TrackingSource<DateTimeOffset>).Ranges
+  let indexSource = (merged.Index :?> Deedle.Indices.Virtual.VirtualOrderedIndex<DateTimeOffset>).Source
+  let trackingSource =
+    match indexSource with
+    | :? Deedle.Vectors.Virtual.VirtualVectorSource.ILinearAddressedSource<DateTimeOffset> as wrapped ->
+        wrapped.Source :?> TrackingSource<DateTimeOffset>
+    | :? TrackingSource<DateTimeOffset> as src -> src
+    | _ -> failwith "expected TrackingSource (possibly behind linear addressing)"
+  let ranges = trackingSource.Ranges
   ranges.Ranges.Length |> shouldEqual 2
 
   // Check number of keys in the merged series

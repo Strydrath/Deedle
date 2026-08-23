@@ -190,7 +190,7 @@ module CsvVirtualSource =
             VirtualLookupRange.forCategoricalScan length valueAt,
             sprintf "categorical IndexList (%d distinct; one-time O(N) scan per filter value)" distinct.Length)
 
-  let private resolveSearchLookupRange (lineIndex: CsvLineIndex) (header: string[]) (colIdx: int) (name: string) (kind: string) (options: VirtualReadCsvOptions) =
+  let private resolveSearchLookupRange (lineIndex: CsvLineIndex) (_header: string[]) (colIdx: int) (name: string) (kind: string) (options: VirtualReadCsvOptions) =
     match options.SearchColumn with
     | Some (searchName, LookupRangeUnsupported) when String.Equals(name, searchName, StringComparison.OrdinalIgnoreCase) && kind = "string" ->
         match tryInferStringLookupRange lineIndex colIdx name with
@@ -204,13 +204,6 @@ module CsvVirtualSource =
             None
     | Some (searchName, mode) when String.Equals(name, searchName, StringComparison.OrdinalIgnoreCase) ->
         Some mode
-    | None when kind = "string" ->
-        match tryInferStringLookupRange lineIndex colIdx name with
-        | Some (mode, desc) ->
-            System.Diagnostics.Trace.WriteLine(
-              sprintf "Deedle.Virtual.ReadCsv: inferred %s LookupRange for column '%s'." desc name)
-            Some mode
-        | None -> None
     | _ -> None
 
   let private createTypedColumn (lineIndex: CsvLineIndex) (columnIndex: int) (kind: string) lookupRange =
