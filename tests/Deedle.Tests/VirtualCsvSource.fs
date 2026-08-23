@@ -16,10 +16,19 @@ open System.IO
 open FsUnit
 open NUnit.Framework
 open Deedle
+open Deedle.Internal
+open Deedle.Addressing
+open Deedle.Vectors
 open Deedle.Virtual
 open Deedle.Virtual.Sources
 open Deedle.Vectors.Virtual
 open Deedle.Tests.VirtualInstrumentation
+
+// ------------------------------------------------------------------------------------------------
+// Virtual.ReadCsv (src/Deedle/VirtualCsvSource.fs)
+// ------------------------------------------------------------------------------------------------
+
+let fixturesPath = Path.Combine(__SOURCE_DIRECTORY__, "data", "virtual-fixtures.csv")
 
 module private SearchDataset =
   let nLarge = 100_000L
@@ -43,7 +52,6 @@ module private SearchDataset =
     sw.Stop()
     float sw.ElapsedMilliseconds
 
-/// Instrumented low-level CSV virtual sources (for access-counter tests).
 module private InstrumentedCsvSource =
   let private wrap (counters: AccessCounters) (source: IVirtualVectorSource) =
     CountingVirtualSource.Wrap counters source
@@ -68,8 +76,33 @@ module private InstrumentedCsvSource =
       :?> IVirtualVectorSource<float>
     counters, Virtual.CreateOrdinalSeries(src)
 
+[<Test>]
+let ``Can read virtual fixtures CSV with quoted fields and missing cells`` () =
+  let frame = Virtual.ReadCsv(fixturesPath, indexColumn = "Timestamp", columnKeys = [ "Id"; "Category"; "Label"; "Value" ])
+  frame.RowCount |> shouldEqual 4
+  frame.GetColumn<string>("Label").GetAt(0) |> shouldEqual "hello, world"
+  frame.GetColumn<string>("Label").GetAt(1) |> shouldEqual "a \"b\" c"
+  frame.GetColumn<int64>("Id").TryGetAt(2).HasValue |> shouldEqual false
+  frame.GetColumn<float>("Value").TryGetAt(2).HasValue |> shouldEqual false
+  VirtualFrameDiagnostics.GetRowIndexKind frame |> shouldEqual VirtualRowIndexKind.OrderedVirtual
+
+[<Test>]
+let ``ReadCsv throws when file is missing`` () =
+  (fun () -> Virtual.ReadCsv(Path.Combine(Path.GetTempPath(), "deedle-csv-missing.csv")) |> ignore)
+  |> should throw typeof<System.Exception>
+
+[<Test>]
+let ``ReadCsv throws when CSV has no data rows`` () =
+  let path = Path.Combine(Path.GetTempPath(), "deedle-csv-empty.csv")
+  File.WriteAllText(path, "Timestamp,Id\r\n")
+  try
+    (fun () -> Virtual.ReadCsv(path) |> ignore)
+    |> should throw typeof<System.ArgumentException>
+  finally
+    if File.Exists path then File.Delete path
+
 [<Test; NonParallelizable>]
-let ``ReadCsv loads search dataset with virtual row index`` () =
+let ``Can read large search CSV with virtual row index`` () =
   SearchDataset.ensureCsv()
   let frame =
     Virtual.ReadCsv(
@@ -85,20 +118,15 @@ let ``ReadCsv loads search dataset with virtual row index`` () =
   filtered.RowCount |> shouldEqual 12_500
 
 [<Test; NonParallelizable>]
-let ``ReadCsv auto-detects Timestamp index column`` () =
+let ``Can auto-detect Timestamp index column when reading CSV virtually`` () =
   let csvPath = Path.Combine(Path.GetTempPath(), "deedle-csv-autodetect.csv")
   CsvTestData.ensureSearchCsv csvPath 1000L |> ignore
   let frame = Virtual.ReadCsv(csvPath, columnKeys = [ "Id" ])
   frame.RowCount |> shouldEqual 1000
   FrameProbe.rowIndexIsVirtual frame |> shouldEqual true
 
-[<Test>]
-let ``ReadCsv throws when file is missing`` () =
-  (fun () -> Virtual.ReadCsv(Path.Combine(Path.GetTempPath(), "deedle-csv-missing.csv")) |> ignore)
-  |> should throw typeof<System.Exception>
-
 [<Test; NonParallelizable>]
-let ``ReadCsv infers remaining columns when columnKeys omitted`` () =
+let ``Can infer remaining columns when columnKeys omitted`` () =
   let csvPath = Path.Combine(Path.GetTempPath(), "deedle-csv-infer.csv")
   CsvTestData.ensureSearchCsv csvPath 1000L |> ignore
   let frame = Virtual.ReadCsv(csvPath, indexColumn = "Timestamp")
@@ -107,7 +135,7 @@ let ``ReadCsv infers remaining columns when columnKeys omitted`` () =
   frame.GetColumn<int64>("Id").KeyCount |> shouldEqual 1000
 
 [<Test; NonParallelizable>]
-let ``forCategoricalScan filters without Step cycle`` () =
+let ``Can filter with forCategoricalScan without Step cycle`` () =
   let csvPath = Path.Combine(Path.GetTempPath(), "deedle-csv-categorical.csv")
   CsvTestData.ensureSearchCsv csvPath 800L |> ignore
   let lineIndex = CsvLineIndex(csvPath)
@@ -127,7 +155,7 @@ let ``forCategoricalScan filters without Step cycle`` () =
   filtered.RowCount |> shouldEqual 100
 
 [<Test>]
-let ``empty and NA cells become missing values`` () =
+let ``Can read empty and NA cells as missing values in virtual CSV`` () =
   let csvPath = Path.Combine(Path.GetTempPath(), "deedle-csv-missing-cells.csv")
   File.WriteAllText(
     csvPath,
@@ -147,7 +175,7 @@ let ``empty and NA cells become missing values`` () =
   values.TryGetAt(2).HasValue |> shouldEqual false
 
 [<Test>]
-let ``forRepeatingCycle unknown value yields empty filter`` () =
+let ``Can filter unknown repeating-cycle value to empty result`` () =
   let csvPath = Path.Combine(Path.GetTempPath(), "deedle-csv-unknown-cat.csv")
   CsvTestData.ensureSearchCsv csvPath 64L |> ignore
   let frame =
@@ -161,7 +189,7 @@ let ``forRepeatingCycle unknown value yields empty filter`` () =
   filtered.RowCount |> shouldEqual 0
 
 [<Test>]
-let ``quoted CSV fields with commas parse correctly`` () =
+let ``Can parse quoted CSV fields with commas and escaped quotes`` () =
   let csvPath = Path.Combine(Path.GetTempPath(), "deedle-csv-quoted.csv")
   File.WriteAllText(
     csvPath,
@@ -175,7 +203,7 @@ let ``quoted CSV fields with commas parse correctly`` () =
   frame.GetColumn<float>("Value").GetAt(0) |> shouldEqual 2.5
 
 [<Test>]
-let ``ReadCsv auto-detects ordered datetime row index`` () =
+let ``Can auto-detect ordered datetime row index from CSV`` () =
   let path = Path.GetTempFileName() + ".csv"
   try
     File.WriteAllLines(path, [| "Timestamp,Id,Category"; "2020-01-01T00:00:00Z,1,lorem"; "2020-01-02T00:00:00Z,2,ipsum" |])
@@ -185,7 +213,7 @@ let ``ReadCsv auto-detects ordered datetime row index`` () =
     if File.Exists path then File.Delete path
 
 [<Test>]
-let ``ReadCsv infers Step LookupRange for low-cardinality search column`` () =
+let ``Can infer Step LookupRange for low-cardinality search column`` () =
   let path = Path.GetTempFileName() + ".csv"
   let words = CsvTestData.words8
   try
@@ -210,7 +238,7 @@ let ``ReadCsv does not infer LookupRange for non-search string columns`` () =
     if File.Exists path then File.Delete path
 
 [<Test>]
-let ``ReadCsv exposes virtual ordered row index and csv-file scheme`` () =
+let ``Can expose virtual ordered row index and csv-file scheme`` () =
   let csvPath = Path.GetTempFileName() + ".csv"
   try
     CsvTestData.ensureSearchCsv csvPath 500L |> ignore
@@ -222,7 +250,7 @@ let ``ReadCsv exposes virtual ordered row index and csv-file scheme`` () =
     if File.Exists csvPath then File.Delete csvPath
 
 [<Test; NonParallelizable>]
-let ``shared row cache decodes each row once across columns`` () =
+let ``Can decode each CSV row once across columns via shared cache`` () =
   SearchDataset.ensureCsv()
   let lineIndex = CsvLineIndex(SearchDataset.csvPath)
   let idSrc = VirtualCsvSource.createColumnSource lineIndex "Id" None :?> IVirtualVectorSource<int64>
@@ -236,7 +264,7 @@ let ``shared row cache decodes each row once across columns`` () =
   lineIndex.SplitCount |> shouldEqual 100
 
 [<Test; NonParallelizable>]
-let ``slice decode count stays within slice bounds`` () =
+let ``Can keep slice decode count within slice bounds`` () =
   SearchDataset.ensureCsv()
   let lineIndex = CsvLineIndex(SearchDataset.csvPath)
   let src =
@@ -249,7 +277,7 @@ let ``slice decode count stays within slice bounds`` () =
   lineIndex.SplitCount |> shouldEqual 100
 
 [<Test; NonParallelizable>]
-let ``filterRowsBy2 on ReadCsv stays virtual with correct count`` () =
+let ``Can filterRowsBy2 on ReadCsv staying virtual with correct count`` () =
   SearchDataset.ensureCsv()
   let frame =
     Virtual.ReadCsv(
@@ -265,7 +293,7 @@ let ``filterRowsBy2 on ReadCsv stays virtual with correct count`` () =
   fused.RowCount |> shouldEqual 12_500
 
 [<Test; NonParallelizable>]
-let ``filterRowsBy2 row count matches single filter on ReadCsv`` () =
+let ``Can match filterRowsBy2 row count to single filter on ReadCsv`` () =
   SearchDataset.ensureCsv()
   let frame =
     Virtual.ReadCsv(
@@ -281,7 +309,7 @@ let ``filterRowsBy2 row count matches single filter on ReadCsv`` () =
   fused.RowCount |> shouldEqual single.RowCount
 
 [<Test; NonParallelizable>]
-let ``generated CSV has expected schema`` () =
+let ``Can validate generated search CSV schema and meta`` () =
   SearchDataset.ensureCsv()
   let idx = CsvLineIndex(SearchDataset.csvPath)
   idx.Length |> shouldEqual SearchDataset.nLarge
@@ -291,13 +319,12 @@ let ``generated CSV has expected schema`` () =
   let meta = CsvTestData.readMeta SearchDataset.csvPath
   meta.Seed |> shouldEqual CsvTestData.defaultSeed
   meta.RowCount |> shouldEqual SearchDataset.nLarge
-  // Non-consecutive ids: row ordinals 0 and 1 should not both equal their row index.
   let id0 = Int32.Parse(fields.[0])
   let id1 = Int32.Parse((idx.ReadFields 1L).[0])
   (id0 = 0 && id1 = 1) |> shouldEqual false
 
 [<Test; NonParallelizable>]
-let ``CSV virtual frame preserves virtual row index on filter`` () =
+let ``Can preserve virtual row index on CSV filter`` () =
   SearchDataset.ensureCsv()
   let c, frame, words =
     InstrumentedCsvSource.createOrderedSearchFrame SearchDataset.csvPath (AccessCounters())
@@ -309,7 +336,7 @@ let ``CSV virtual frame preserves virtual row index on filter`` () =
   filtered.RowCount |> shouldEqual (SearchDataset.expectedMatchCount SearchDataset.nLarge words.Length)
 
 [<Test; NonParallelizable>]
-let ``CSV virtual filter does not scan all rows at filter time`` () =
+let ``Can filter CSV virtually without scanning all rows at filter time`` () =
   SearchDataset.ensureCsv()
   let c, frame, _ =
     InstrumentedCsvSource.createOrderedSearchFrame SearchDataset.csvPath (AccessCounters())
@@ -320,13 +347,13 @@ let ``CSV virtual filter does not scan all rows at filter time`` () =
   d.LookupRangeCount |> shouldEqual 1
 
 [<Test; NonParallelizable>]
-let ``materialized ReadCsv loads full dataset`` () =
+let ``Can materialize ReadCsv loading full dataset`` () =
   SearchDataset.ensureCsv()
   let frame = Frame.ReadCsv(SearchDataset.csvPath, inferRows=100)
   frame.RowCount |> shouldEqual (int SearchDataset.nLarge)
 
 [<Test; NonParallelizable>]
-let ``CSV virtual slice reads only requested rows`` () =
+let ``Can slice virtual CSV reading only requested rows`` () =
   SearchDataset.ensureCsv()
   let c, series =
     InstrumentedCsvSource.createFloatValueSeries SearchDataset.csvPath (AccessCounters())
@@ -342,7 +369,7 @@ let ``CSV virtual slice reads only requested rows`` () =
   c.Snapshot().ValueAtCount |> shouldEqual 1
 
 [<Test; NonParallelizable>]
-let ``CSV virtual Stats.sum materializes full column pull`` () =
+let ``Can materialize full column on CSV Stats.sum`` () =
   SearchDataset.ensureCsv()
   let c, series =
     InstrumentedCsvSource.createFloatValueSeries SearchDataset.csvPath (AccessCounters())
@@ -354,7 +381,7 @@ let ``CSV virtual Stats.sum materializes full column pull`` () =
   SeriesProbe.isVirtual series |> shouldEqual true
 
 [<Test; NonParallelizable>]
-let ``file-backed filter is faster than materialized full scan`` () =
+let ``Can filter file-backed CSV faster than materialized full scan`` () =
   SearchDataset.ensureCsv()
   let virtualMs =
     SearchDataset.elapsedMs (fun () ->
@@ -370,3 +397,31 @@ let ``file-backed filter is faster than materialized full scan`` () =
       |> Seq.length
       |> ignore)
   virtualMs |> should be (lessThan materializedMs)
+
+[<Test>]
+let ``ReadCsv throws when column name is unknown`` () =
+  let path = Path.Combine(Path.GetTempPath(), "deedle-csv-unknown-col.csv")
+  CsvTestData.ensureSearchCsv path 10L |> ignore
+  try
+    (fun () -> Virtual.ReadCsv(path, indexColumn = "Timestamp", columnKeys = [ "NotAColumn" ]) |> ignore)
+    |> should throw typeof<System.Exception>
+  finally
+    if File.Exists path then File.Delete path
+
+[<Test>]
+let ``ReadCsv throws when index column cell is invalid`` () =
+  let path = Path.Combine(Path.GetTempPath(), "deedle-csv-bad-index.csv")
+  File.WriteAllText(
+    path,
+    "Timestamp,Id\r\n" +
+    "not-a-datetime,1\r\n" +
+    "2000-01-01T00:00:01.0000000+00:00,2\r\n")
+  try
+    let lineIndex = CsvLineIndex(path)
+    let idx =
+      VirtualCsvSource.createIndexSource lineIndex "Timestamp"
+      :?> IVirtualVectorSource<DateTimeOffset>
+    (fun () -> idx.ValueAt(KnownLocation(LinearAddress.ofInt64 0L, 0L)) |> ignore)
+    |> should throw typeof<System.FormatException>
+  finally
+    if File.Exists path then File.Delete path

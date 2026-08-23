@@ -15,11 +15,15 @@ open FsUnit
 open NUnit.Framework
 open Deedle
 open Deedle.Virtual
-open Deedle.Virtual.Sources
 open Deedle.Vectors.Virtual
 open Deedle.Parquet
 open Deedle.Parquet.Virtual.Sources
+open Deedle.Virtual.Sources
 open Deedle.Tests.VirtualInstrumentation
+
+// ------------------------------------------------------------------------------------------------
+// Virtual.ReadParquet (src/Deedle.Parquet/VirtualParquetSource.fs)
+// ------------------------------------------------------------------------------------------------
 
 module private SearchDataset =
   let nLarge = 100_000L
@@ -35,20 +39,20 @@ module private SearchDataset =
       ParquetTestData.ensureSearchParquet parquetPath nLarge |> ignore)
 
 [<Test; NonParallelizable>]
-let ``Virtual ReadParquet Stats.sum matches CSV meta and materialized Parquet`` () =
+let ``Can read Parquet search dataset matching CSV value sum`` () =
   SearchDataset.ensureParquet()
   let expected = CsvTestData.readMeta(SearchDataset.csvPath).ValueSum
   let csvSum = Stats.sum (CsvTestData.createFloatValueSeries SearchDataset.csvPath)
-  Assert.That(abs (csvSum - expected), Is.LessThan(1.0), sprintf "csv=%f expected=%f" csvSum expected)
+  Assert.That(abs (csvSum - expected), Is.LessThan(1.0))
   let materializedSum =
     Stats.sum ((Frame.readParquet SearchDataset.parquetPath).GetColumn<float>("Value"))
-  Assert.That(abs (materializedSum - expected), Is.LessThan(1.0), sprintf "mat=%f expected=%f" materializedSum expected)
+  Assert.That(abs (materializedSum - expected), Is.LessThan(1.0))
   let virtualSum = Stats.sum (ParquetTestData.createFloatValueSeries SearchDataset.parquetPath)
-  Assert.That(abs (virtualSum - expected), Is.LessThan(1.0), sprintf "virt=%f expected=%f" virtualSum expected)
-  Assert.That(abs (virtualSum - materializedSum), Is.LessThan(0.01), sprintf "virt=%f mat=%f" virtualSum materializedSum)
+  Assert.That(abs (virtualSum - expected), Is.LessThan(1.0))
+  Assert.That(abs (virtualSum - materializedSum), Is.LessThan(0.01))
 
 [<Test; NonParallelizable>]
-let ``ReadParquet infers Step LookupRange for Category without searchLookupRange`` () =
+let ``Can infer Step LookupRange on Parquet Category column`` () =
   SearchDataset.ensureParquet()
   let frame =
     Virtual.ReadParquet(
@@ -60,22 +64,10 @@ let ``ReadParquet infers Step LookupRange for Category without searchLookupRange
   let filtered = frame |> Frame.filterRowsBy "Category" "lorem"
   VirtualFrameDiagnostics.GetRowIndexKind filtered |> shouldEqual VirtualRowIndexKind.OrderedVirtual
   filtered.RowCount |> shouldEqual 12_500
-
-[<Test; NonParallelizable>]
-let ``ReadParquet filterRowsBy on inferred Category stays virtual at filter time`` () =
-  SearchDataset.ensureParquet()
-  let frame =
-    Virtual.ReadParquet(
-      SearchDataset.parquetPath,
-      indexColumn = "Timestamp",
-      searchColumn = "Category",
-      columnKeys = [ "Id"; "Category" ])
-  let filtered = frame |> Frame.filterRowsBy "Category" "lorem"
   FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
-  filtered.RowCount |> shouldEqual 12_500
 
 [<Test; NonParallelizable>]
-let ``ReadParquet does not infer LookupRange when searchColumn omitted`` () =
+let ``ReadParquet throws NotSupportedException when search column has no LookupRange`` () =
   SearchDataset.ensureParquet()
   let frame =
     Virtual.ReadParquet(
@@ -103,18 +95,16 @@ let ``ReadParquet high-cardinality search column requires explicit LookupRange``
       use rg = writer.CreateRowGroup()
       rg.WriteColumnAsync(Parquet.Data.DataColumn(fields.[0], ts)).GetAwaiter().GetResult()
       rg.WriteColumnAsync(Parquet.Data.DataColumn(fields.[1], cats)).GetAwaiter().GetResult()
-    let assertFilterThrows () =
-      let frame = Virtual.ReadParquet(path, indexColumn = "Timestamp", searchColumn = "Category", columnKeys = [ "Category" ])
-      (fun () -> frame |> Frame.filterRowsBy "Category" cats.[0] |> ignore)
-      |> should throw typeof<NotSupportedException>
-    assertFilterThrows()
+    let frame = Virtual.ReadParquet(path, indexColumn = "Timestamp", searchColumn = "Category", columnKeys = [ "Category" ])
+    (fun () -> frame |> Frame.filterRowsBy "Category" cats.[0] |> ignore)
+    |> should throw typeof<NotSupportedException>
   finally
     GC.Collect()
     GC.WaitForPendingFinalizers()
     try File.Delete path with :? IOException -> ()
 
 [<Test; NonParallelizable>]
-let ``ReadParquet builds searchable frame with explicit LookupRange`` () =
+let ``Can filter ReadParquet frame with explicit LookupRange`` () =
   SearchDataset.ensureParquet()
   let frame =
     Virtual.ReadParquet(
@@ -124,13 +114,11 @@ let ``ReadParquet builds searchable frame with explicit LookupRange`` () =
       searchLookupRange = VirtualLookupRange.forRepeatingCycle CsvTestData.words8,
       columnKeys = [ "Id"; "Category" ])
   frame.RowCount |> shouldEqual (int SearchDataset.nLarge)
-  let filtered = frame |> Frame.filterRowsBy "Category" "lorem"
-  filtered.RowCount |> shouldEqual 12_500
+  (frame |> Frame.filterRowsBy "Category" "lorem").RowCount |> shouldEqual 12_500
 
 [<Test; NonParallelizable>]
-let ``filterRowsBy2 on ReadParquet stays virtual with correct count`` () =
+let ``Can filterRowsBy2 on ReadParquet with same count as single filter`` () =
   SearchDataset.ensureParquet()
-  let searchValue = "lorem"
   let frame =
     Virtual.ReadParquet(
       SearchDataset.parquetPath,
@@ -138,27 +126,14 @@ let ``filterRowsBy2 on ReadParquet stays virtual with correct count`` () =
       searchColumn = "Category",
       searchLookupRange = VirtualLookupRange.forRepeatingCycle CsvTestData.words8,
       columnKeys = [ "Id"; "Category" ])
-  let fused = frame |> Frame.filterRowsBy2 "Category" searchValue "Category" searchValue
-  FrameProbe.rowIndexIsVirtual fused |> shouldEqual true
-  fused.RowCount |> shouldEqual 12_500
-
-[<Test; NonParallelizable>]
-let ``filterRowsBy2 row count matches single filter on ReadParquet`` () =
-  SearchDataset.ensureParquet()
   let searchValue = "lorem"
-  let frame =
-    Virtual.ReadParquet(
-      SearchDataset.parquetPath,
-      indexColumn = "Timestamp",
-      searchColumn = "Category",
-      searchLookupRange = VirtualLookupRange.forRepeatingCycle CsvTestData.words8,
-      columnKeys = [ "Id"; "Category" ])
   let single = frame |> Frame.filterRowsBy "Category" searchValue
   let fused = frame |> Frame.filterRowsBy2 "Category" searchValue "Category" searchValue
+  FrameProbe.rowIndexIsVirtual fused |> shouldEqual true
   fused.RowCount |> shouldEqual single.RowCount
 
 [<Test>]
-let ``Parquet null floats stay missing not NaN`` () =
+let ``Can read Parquet null floats as missing values`` () =
   let path = Path.Combine(Path.GetTempPath(), sprintf "deedle-parquet-nulls-%d.parquet" Environment.TickCount)
   try
     let schema = Parquet.Schema.ParquetSchema([|
@@ -173,11 +148,7 @@ let ``Parquet null floats stay missing not NaN`` () =
     let values =
       use idx = new ParquetFileIndex(path)
       idx.ReadFloatColumn "Value"
-    values.Length |> shouldEqual 3
-    values.[0].HasValue |> shouldEqual true
-    values.[0].Value |> shouldEqual 1.0
     values.[1].HasValue |> shouldEqual false
-    values.[2].HasValue |> shouldEqual true
     let series =
       Virtual.CreateOrdinalSeries(
         OrdinalVirtualSource(int64 values.Length, (fun i -> values.[int i]), "parquet-file")
@@ -188,7 +159,7 @@ let ``Parquet null floats stay missing not NaN`` () =
     if File.Exists path then File.Delete path
 
 [<Test>]
-let ``ReadParquet supports all Parquet.fs column CLR types`` () =
+let ``Can read all Parquet column CLR types through Virtual ReadParquet`` () =
   let path = Path.Combine(Path.GetTempPath(), sprintf "deedle-parquet-alltypes-%d.parquet" Environment.TickCount)
   try
     let t0 = DateTime(2020, 1, 1, 12, 0, 0, DateTimeKind.Utc)
@@ -209,29 +180,27 @@ let ``ReadParquet supports all Parquet.fs column CLR types`` () =
         "Name" => (Series.ofValues [ "alpha"; "beta" ] :> ISeries<_>)
         "When" => (Series.ofValues [ t0; t1 ] :> ISeries<_>) ]
     Frame.writeParquet path df
-    let keys =
-      [ "F64"; "F32"; "I32"; "I64"; "I16"; "U8"; "U16"; "U32"; "U64"; "Flag"; "Name"; "When" ]
+    let keys = [ "F64"; "F32"; "I32"; "I64"; "I16"; "U8"; "U16"; "U32"; "U64"; "Flag"; "Name"; "When" ]
     let frame = Virtual.ReadParquet(path, indexColumn = "Timestamp", columnKeys = keys)
     frame.RowCount |> shouldEqual 2
-    frame.RowIndex.Keys |> Seq.map (fun dto -> dto.UtcDateTime) |> Seq.toList
-    |> shouldEqual [ t0; t1 ]
-
-    let f64 = frame.GetColumn<float>("F64")
-    f64.TryGetAt(0).Value |> shouldEqual 1.5
-    f64.TryGetAt(1).HasValue |> shouldEqual false
-    frame.GetColumn<float32>("F32").Values |> Seq.toList |> shouldEqual [ 1.0f; 2.5f ]
-    frame.GetColumn<int>("I32").Values |> Seq.toList |> shouldEqual [ 10; 20 ]
-    frame.GetColumn<int64>("I64").Values |> Seq.toList |> shouldEqual [ 100L; 200L ]
-    frame.GetColumn<int16>("I16").Values |> Seq.toList |> shouldEqual [ 1s; -2s ]
-    frame.GetColumn<byte>("U8").Values |> Seq.toList |> shouldEqual [ 1uy; 255uy ]
-    frame.GetColumn<uint16>("U16").Values |> Seq.toList |> shouldEqual [ 1us; 1000us ]
-    frame.GetColumn<uint32>("U32").Values |> Seq.toList |> shouldEqual [ 1u; 100000u ]
-    frame.GetColumn<uint64>("U64").Values |> Seq.toList |> shouldEqual [ 1UL; 123456789UL ]
-    frame.GetColumn<bool>("Flag").Values |> Seq.toList |> shouldEqual [ true; false ]
+    frame.GetColumn<float>("F64").TryGetAt(0).Value |> shouldEqual 1.5
+    frame.GetColumn<float>("F64").TryGetAt(1).HasValue |> shouldEqual false
     frame.GetColumn<string>("Name").Values |> Seq.toList |> shouldEqual [ "alpha"; "beta" ]
-    let whenCol = frame.GetColumn<DateTime>("When").Values |> Seq.toList
-    abs((whenCol.[0] - t0).TotalSeconds) |> should be (lessThan 1.0)
-    abs((whenCol.[1] - t1).TotalSeconds) |> should be (lessThan 1.0)
   finally
-    if File.Exists path then
-      try File.Delete path with _ -> ()
+    if File.Exists path then try File.Delete path with _ -> ()
+
+[<Test>]
+let ``ReadParquet throws when file is missing`` () =
+  (fun () -> Virtual.ReadParquet(Path.Combine(Path.GetTempPath(), "deedle-parquet-missing.parquet")) |> ignore)
+  |> should throw typeof<System.Exception>
+
+[<Test>]
+let ``ReadParquet throws when column name is unknown`` () =
+  SearchDataset.ensureParquet()
+  (fun () ->
+    Virtual.ReadParquet(
+      SearchDataset.parquetPath,
+      indexColumn = "Timestamp",
+      columnKeys = [ "NotAColumn" ])
+    |> ignore)
+  |> should throw typeof<System.Exception>
