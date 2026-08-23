@@ -54,7 +54,7 @@
     <Compile Include="FrameStatsExtensions.fs" />
     <Compile Include="DelayedSeries.fs" />
     <Compile Include="VirtualFrame.fs" />
-    <Compile Include="CsvVirtualSource.fs" />
+    <Compile Include="VirtualCsvSource.fs" />
     <Compile Include="VirtualFrameDiagnostics.fs" />
     <None Include="paket.references" />
     <None Include="Deedle.fsx">

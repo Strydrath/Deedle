@@ -46,7 +46,7 @@ module internal CsvParsing =
 
   let field (fields: string[]) (columnIndex: int) =
     if columnIndex >= fields.Length then
-      failwithf "CsvVirtualSource: column %d missing (fields=%d)" columnIndex fields.Length
+      failwithf "VirtualCsvSource: column %d missing (fields=%d)" columnIndex fields.Length
     fields.[columnIndex].TrimEnd('\r', '\n')
 
   let isMissingCell (s: string) =
@@ -75,7 +75,7 @@ module internal CsvParsing =
   let columnIndex (header: string[]) (name: string) =
     match header |> Array.tryFindIndex (fun h -> String.Equals(h, name, StringComparison.OrdinalIgnoreCase)) with
     | Some idx -> idx
-    | None -> failwithf "CsvVirtualSource: column '%s' not found in header" name
+    | None -> failwithf "VirtualCsvSource: column '%s' not found in header" name
 
 /// Shared line index for one CSV file (built once, reused by column sources).
 type CsvLineIndex(path: string, ?skipHeader: bool) =
@@ -120,7 +120,7 @@ type CsvLineIndex(path: string, ?skipHeader: bool) =
     | null -> [||]
     | line -> CsvParsing.splitCsvLine line |> Array.map (fun s -> s.Trim())
 
-module CsvVirtualSource =
+module VirtualCsvSource =
   open CsvParsing
 
   let private looksLikeDateTime (s: string) =
@@ -198,7 +198,7 @@ module CsvVirtualSource =
 
   /// Build a virtual frame from an indexed CSV file.
   let createFrame (csvPath: string) (options: VirtualReadCsvOptions) =
-    if not (File.Exists csvPath) then failwithf "CsvVirtualSource: file not found '%s'" csvPath
+    if not (File.Exists csvPath) then failwithf "VirtualCsvSource: file not found '%s'" csvPath
     let lineIndex = CsvLineIndex(csvPath)
     if lineIndex.Length = 0L then invalidArg "csvPath" "CSV has no data rows"
     let header = lineIndex.HeaderColumns
@@ -339,12 +339,12 @@ module CsvTestData =
           SearchColumn =
             Some("Category", VirtualLookupRange.forRepeatingCycle words8)
           ColumnKeys = Some [ "Id"; "Category" ] }
-    CsvVirtualSource.createFrame csvPath options, words8
+    VirtualCsvSource.createFrame csvPath options, words8
 
   let createFloatValueSeries (csvPath: string) =
     let lineIndex = CsvLineIndex(csvPath)
     let src =
-      CsvVirtualSource.createColumnSource lineIndex "Value" None
+      VirtualCsvSource.createColumnSource lineIndex "Value" None
       :?> IVirtualVectorSource<float>
     Virtual.CreateOrdinalSeries(src)
 
@@ -371,4 +371,4 @@ module VirtualCsvExtensions =
         { IndexColumn = indexColumn
           SearchColumn = searchCol
           ColumnKeys = columnKeys }
-      CsvVirtualSource.createFrame path options
+      VirtualCsvSource.createFrame path options
