@@ -21,10 +21,12 @@
 - **`Virtual.ReadParquet` (B13):** new API in `Deedle.Parquet` that loads a Parquet file as a virtual `Frame`. Requested columns are cached in memory; the file handle stays reachable for the frame lifetime. Column CLR types match `Frame.readParquet` (float/float32, signed/unsigned integers, bool, string, DateTime/DateTimeOffset). Nulls map to missing values.
 - **Ordinal virtual `filterRowsBy` (B14):** `VirtualIndexBuilder.Search` now uses the search column's **`LookupRange`** on **`VirtualOrdinalIndex`** frames (same as ordered indices), fixing accidental ~38 s / ~34 GiB linear scan at N=100k when `LookupRange` is configured. Benchmark renamed to `FilterRowsBy_OrdinalStep` (~µs + KiB).
 - **Filter without `LookupRange`:** virtual `filterRowsBy` on an unconfigured search column raises **`NotSupportedException`** with setup guidance (instead of a generic failure or full scan).
+- **`VirtualFrameDiagnostics`:** read-only helpers to inspect virtual row index kind, column virtuality, and scheme id.
+- **`Virtual.ReadCsv` LookupRange inference:** when `searchColumn` is set without `searchLookupRange`, low-cardinality string columns (≤64 distinct values) are inferred once at load time.
+- **`clipLookupRange`:** remaps Step/IndexList modes after Fixed slices. Prefer **`filterRowsBy2`** for two predicates on the same Step column.
+- **Virtual ordered slices / `Series.diff` / `Series.shift`:** ordered `GetAddressRange` / `GetRange` reindex onto linear `0..n-1` addresses so absolute-address partitioned sources align (fixes zero diffs on BigDeedle Ranges backends).
 
 ### Bug fixes
-
-- **`VirtualFrameDiagnostics`**, **`Virtual.ReadCsv` LookupRange inference** (≤64 distinct strings), **`clipLookupRange`** for Step/IndexList after Fixed slices. Prefer **`filterRowsBy2`** for two predicates on the same Step column.
 - **Virtual wrappers (B10):** boxed / combined / mapped / row-reader sources no longer `failwith` on `LookupRange` / `LookupValue` — they delegate or scan. Partitioned `Ranges` sources accept custom LookupRange results. `Series.fillMissing` / `fillMissingWith` stay virtual. `VirtualVectorBuilder.AsyncBuild` with a virtual scheme raises `NotSupportedException` (use `Series.Materialize` / `AsyncMaterialize`).
 
 ### Tests

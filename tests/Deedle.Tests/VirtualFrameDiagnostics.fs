@@ -35,11 +35,22 @@ let ``B14 ReadCsv infers Step LookupRange for low-cardinality Category column`` 
   let words = CsvTestData.words8
   try
     CsvTestData.ensureSearchCsv path 1000L
-    let frame = Virtual.ReadCsv(path, indexColumn = "Timestamp", columnKeys = [ "Id"; "Category" ])
+    let frame = Virtual.ReadCsv(path, indexColumn = "Timestamp", searchColumn = "Category", columnKeys = [ "Id"; "Category" ])
     VirtualFrameDiagnostics.IsVirtualColumn(frame, "Category") |> shouldEqual true
     let filtered = frame |> Frame.filterRowsBy "Category" words.[0]
     VirtualFrameDiagnostics.GetRowIndexKind filtered |> shouldEqual VirtualRowIndexKind.OrderedVirtual
     filtered.RowCount |> should be (greaterThan 0)
+  finally
+    if System.IO.File.Exists path then System.IO.File.Delete path
+
+[<Test>]
+let ``B14 ReadCsv does not infer LookupRange for non-search string columns`` () =
+  let path = Path.GetTempFileName() + ".csv"
+  try
+    CsvTestData.ensureSearchCsv path 1000L
+    let frame = Virtual.ReadCsv(path, indexColumn = "Timestamp", columnKeys = [ "Id"; "Category" ])
+    (fun () -> frame |> Frame.filterRowsBy "Category" "lorem" |> ignore)
+    |> should throw typeof<NotSupportedException>
   finally
     if System.IO.File.Exists path then System.IO.File.Delete path
 
