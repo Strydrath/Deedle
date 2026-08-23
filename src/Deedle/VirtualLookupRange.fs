@@ -42,7 +42,7 @@ module VirtualLookupRange =
       | Some i -> i, values.Length
       | None -> -1, max 1 values.Length)
 
-  /// IndexList LookupRange from a pre-built map of value â†’ row indices.
+  /// IndexList LookupRange from a pre-built map of value -> row indices.
   let forCategorical (indicesByValue: Map<'T, int64 list>) =
     LookupRangeIndexList (fun v ->
       match indicesByValue.TryGetValue v with
