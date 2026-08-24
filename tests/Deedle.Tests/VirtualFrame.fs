@@ -5,6 +5,7 @@
 #r "../../packages/FsCheck/lib/net452/FsCheck.dll"
 #r "../../packages/FsUnit/lib/net45/FsUnit.NUnit.dll"
 #load "../Common/FsUnit.fs"
+#load "VirtualInstrumentation.fs"
 #else
 module Deedle.Tests.VirtualFrame
 #endif
@@ -18,6 +19,7 @@ open Deedle.Addressing
 open Deedle.Vectors
 open Deedle.Virtual
 open Deedle.Vectors.Virtual
+open Deedle.Tests.VirtualInstrumentation
 
 // ------------------------------------------------------------------------------------------------
 // Tracking source
@@ -66,7 +68,18 @@ type TrackingSource<'T>(ranges:(int64*int64) list, valueAt:int64 -> 'T, ?asLong:
 
     member x.LookupRange(v) =
       match search with
-      | Some f -> let o, s = f v in RangeRestriction.Custom { Offset = o; Step = s }
+      | Some f ->
+          let o, s = f v
+          if o < 0 || s <= 0 then
+            let addrs: Address list = []
+            ({ new IRangeRestriction<Address> with
+                member _.Count = 0L
+               interface seq<Address> with
+                 member _.GetEnumerator() = (addrs :> seq<_>).GetEnumerator()
+               interface System.Collections.IEnumerable with
+                 member _.GetEnumerator() = (addrs :> seq<_>).GetEnumerator() :> System.Collections.IEnumerator }
+             |> RangeRestriction.Custom)
+          else RangeRestriction.Custom { Offset = o; Step = s }
       | None -> failwith "Search not supported"
 
     member x.LookupValue(k, l, c) =
@@ -148,7 +161,10 @@ type TrackingSource =
   static member CreateFloats(lo, hi) = TrackingSource<float>([lo, hi], float)
   static member CreateStrings(lo, hi) =
     let strings = "lorem ipsum dolor sit amet consectetur adipiscing elit".Split(' ')
-    let search v = strings |> Seq.findIndex ((=) v), strings.Length
+    let search v =
+      match strings |> Seq.tryFindIndex ((=) v) with
+      | Some i -> i, strings.Length
+      | None -> -1, max 1 strings.Length
     TrackingSource<string>([lo, hi], (fun i -> strings.[int i % strings.Length]), search=search)
   static member CreateTicks(lo, hi) =
     let start = DateTimeOffset(DateTime(2000, 1, 1), TimeSpan.FromHours(-1.0))
@@ -163,6 +179,128 @@ let date (y: int) (m: int) (d: int) = DateTimeOffset(DateTime(y, m, d), TimeSpan
 let ith i = (date 2000 1 1).AddTicks(i * 123456789L)
 let fromTicks (t:int64) = DateTimeOffset(t, TimeSpan.FromHours(0.0)).ToOffset(TimeSpan.FromHours(8.0))
 let toTicks (dto:DateTimeOffset) = dto.UtcTicks
+
+// ------------------------------------------------------------------------------------------------
+// Index search helpers (IndexUtilsModule in src/Deedle/VirtualFrame.fs)
+// ------------------------------------------------------------------------------------------------
+
+[<Test>]
+let ``Can lookup exact key with IndexUtils binary search`` () =
+  let values = [| 10L; 20L; 30L; 40L |]
+  let valueAt = Func<_, _>(fun i -> values.[int i])
+  let check = Func<_, _>(fun _ -> true)
+  IndexUtilsModule.binarySearch 4L valueAt 20L Lookup.Exact check
+  |> shouldEqual (OptionalValue 1L)
+
+[<Test>]
+let ``Can lookup greater key with IndexUtils binary search`` () =
+  let values = [| 10L; 20L; 30L; 40L |]
+  let valueAt = Func<_, _>(fun i -> values.[int i])
+  let check = Func<_, _>(fun _ -> true)
+  IndexUtilsModule.binarySearch 4L valueAt 25L Lookup.Greater check
+  |> shouldEqual (OptionalValue 2L)
+
+[<Test>]
+let ``Can lookup smaller key with IndexUtils binary search`` () =
+  let values = [| 10L; 20L; 30L; 40L |]
+  let valueAt = Func<_, _>(fun i -> values.[int i])
+  let check = Func<_, _>(fun _ -> true)
+  IndexUtilsModule.binarySearch 4L valueAt 25L Lookup.Smaller check
+  |> shouldEqual (OptionalValue 1L)
+
+[<Test>]
+let ``Can return missing for absent key with IndexUtils exact lookup`` () =
+  let values = [| 10L; 20L; 30L; 40L |]
+  let valueAt = Func<_, _>(fun i -> values.[int i])
+  let check = Func<_, _>(fun _ -> true)
+  IndexUtilsModule.binarySearch 4L valueAt 25L Lookup.Exact check
+  |> shouldEqual OptionalValue.Missing
+
+[<Test>]
+let ``Can return missing for IndexUtils binary search on empty range`` () =
+  let valueAt = Func<_, _>(fun _ -> 0L)
+  let check = Func<_, _>(fun _ -> true)
+  IndexUtilsModule.binarySearch 0L valueAt 1L Lookup.Exact check
+  |> shouldEqual OptionalValue.Missing
+
+// ------------------------------------------------------------------------------------------------
+// Virtual construction API (src/Deedle/VirtualFrame.fs)
+// ------------------------------------------------------------------------------------------------
+
+[<Test>]
+let ``CreateOrdinalFrame throws when source lengths differ`` () =
+  let short = InstrumentedOrdinalSource.createLongs 10L |> snd
+  let long = InstrumentedOrdinalSource.createLongs 20L |> snd
+  (fun () ->
+    Virtual.CreateOrdinalFrame(["A"; "B"], [short :> IVirtualVectorSource; long :> IVirtualVectorSource])
+    |> ignore)
+  |> should throw typeof<System.ArgumentException>
+
+[<Test>]
+let ``CreateOrdinalFrame throws when no columns supplied`` () =
+  (fun () -> Virtual.CreateOrdinalFrame([], []) |> ignore)
+  |> should throw typeof<System.ArgumentException>
+
+[<Test>]
+let ``Can create ordinal virtual series and read boundary keys`` () =
+  let src = OrdinalVirtualSource(5L, (fun i -> OptionalValue(i)), "test")
+  let series = Virtual.CreateOrdinalSeries(src)
+  series.KeyCount |> shouldEqual 5
+  series.TryGet(0L) |> shouldEqual (OptionalValue 0L)
+  series.TryGet(4L) |> shouldEqual (OptionalValue 4L)
+  series.TryGet(5L) |> shouldEqual OptionalValue.Missing
+
+[<Test>]
+let ``Can create ordinal virtual frame with expected shape`` () =
+  let _, colA = InstrumentedOrdinalSource.createLongs 8L
+  let _, colB = InstrumentedOrdinalSource.createFloats 8L
+  let frame = Virtual.CreateOrdinalFrame(["A"; "B"], [colA :> IVirtualVectorSource; colB :> IVirtualVectorSource])
+  frame.RowCount |> shouldEqual 8
+  frame.ColumnCount |> shouldEqual 2
+  frame.ColumnKeys |> Seq.toList |> shouldEqual ["A"; "B"]
+  frame.GetColumn<int64>("A").GetAt(3) |> shouldEqual 3L
+  frame.GetColumn<float>("B").GetAt(3) |> shouldEqual 3.0
+
+[<Test>]
+let ``Can lookup ExactOrGreater and ExactOrSmaller with IndexUtils on exact hit`` () =
+  let values = [| 10L; 20L; 30L; 40L |]
+  let valueAt = Func<_, _>(fun i -> values.[int i])
+  let check = Func<_, _>(fun _ -> true)
+  IndexUtilsModule.binarySearch 4L valueAt 20L Lookup.ExactOrGreater check
+  |> shouldEqual (OptionalValue 1L)
+  IndexUtilsModule.binarySearch 4L valueAt 20L Lookup.ExactOrSmaller check
+  |> shouldEqual (OptionalValue 1L)
+
+[<Test>]
+let ``IndexUtils static BinarySearch wrapper matches module`` () =
+  let values = [| 1L; 3L; 5L |]
+  let valueAt = Func<_, _>(fun i -> values.[int i])
+  let check = Func<_, _>(fun _ -> true)
+  IndexUtils.BinarySearch(3L, valueAt, 3L, Lookup.Exact, check)
+  |> shouldEqual (IndexUtilsModule.binarySearch 3L valueAt 3L Lookup.Exact check)
+
+[<Test>]
+let ``IndexUtils binary search skips rows rejected by check`` () =
+  let values = [| 10L; 20L; 30L; 40L |]
+  let valueAt = Func<_, _>(fun i -> values.[int i])
+  let check = Func<_, _>(fun i -> i % 2L = 0L)
+  IndexUtilsModule.binarySearch 4L valueAt 20L Lookup.Exact check
+  |> shouldEqual OptionalValue.Missing
+  IndexUtilsModule.binarySearch 4L valueAt 30L Lookup.Exact check
+  |> shouldEqual (OptionalValue 2L)
+
+[<Test>]
+let ``Can read ValueAt from OrdinalVirtualSource`` () =
+  let src = OrdinalVirtualSource(3L, (fun i -> OptionalValue(float i * 2.0)), "test") :> IVirtualVectorSource<float>
+  src.ValueAt(KnownLocation(Address.ofInt64 1L, 1L)) |> shouldEqual (OptionalValue 2.0)
+  src.Length |> shouldEqual 3L
+
+[<Test>]
+let ``OrdinalVirtualSource MergeWith throws on mismatched source types`` () =
+  let a = OrdinalVirtualSource(4L, (fun i -> OptionalValue(i)), "test") :> IVirtualVectorSource<int64>
+  let mapped = VirtualVectorSource.map None (fun _ ov -> ov) a
+  (fun () -> a.MergeWith([mapped]) |> ignore)
+  |> should throw typeof<System.Exception>
 
 // ------------------------------------------------------------------------------------------------
 // Some trivial testing for TrackingSource

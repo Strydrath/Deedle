@@ -15,9 +15,66 @@ open System.IO
 open FsUnit
 open NUnit.Framework
 open Deedle
+open Deedle.Addressing
 open Deedle.Virtual
 open Deedle.Vectors.Virtual
 open Deedle.Tests.VirtualInstrumentation
+
+module Address = LinearAddress
+
+module private Range =
+  let step offset step =
+    RangeRestriction.Custom { Offset = offset; Step = step } : RangeRestriction<Address>
+
+  let fixedRange lo hi =
+    RangeRestriction.Fixed(Address.ofInt64 lo, Address.ofInt64 hi)
+
+// ------------------------------------------------------------------------------------------------
+// VirtualLookupRange configuration (basic)
+// ------------------------------------------------------------------------------------------------
+
+[<Test>]
+let ``forRepeatingCycle returns step offset for known value`` () =
+  match VirtualLookupRange.forRepeatingCycle [| "a"; "b"; "c" |] with
+  | LookupRangeStep f -> f "b" |> shouldEqual (1, 3)
+  | _ -> failwith "expected LookupRangeStep"
+
+[<Test>]
+let ``forRepeatingCycle returns empty range for unknown value`` () =
+  match VirtualLookupRange.forRepeatingCycle [| "a"; "b" |] with
+  | LookupRangeStep f -> f "missing" |> shouldEqual (-1, 2)
+  | _ -> failwith "expected LookupRangeStep"
+
+[<Test>]
+let ``tryInferStringLookupRange returns None for empty column`` () =
+  VirtualLookupRange.tryInferStringLookupRange 0L (fun _ -> "")
+  |> Option.isNone
+  |> shouldEqual true
+
+[<Test>]
+let ``tryInferStringLookupRange infers repeating cycle for periodic strings`` () =
+  let valueAt i = if i % 2L = 0L then "x" else "y"
+  match VirtualLookupRange.tryInferStringLookupRange 10L valueAt with
+  | Some(_, desc) -> desc |> should haveSubstring "repeating cycle"
+  | None -> failwith "expected inference"
+
+[<Test>]
+let ``tryInferStringLookupRange returns None when distinct count exceeds cap`` () =
+  let valueAt i = sprintf "value-%d" (int i)
+  VirtualLookupRange.tryInferStringLookupRange 100L valueAt
+  |> Option.isNone
+  |> shouldEqual true
+
+[<Test>]
+let ``resolveSearchColumnLookupRange returns None for non-search columns`` () =
+  VirtualLookupRange.resolveSearchColumnLookupRange
+    "Test.Read"
+    (Some("Category", LookupRangeUnsupported))
+    "Id"
+    false
+    (fun () -> Some(VirtualLookupRange.forRepeatingCycle [| "a" |], "cycle"))
+  |> Option.isNone
+  |> shouldEqual true
 
 // ------------------------------------------------------------------------------------------------
 // LookupRange quality sensitivity
@@ -238,7 +295,7 @@ module LookupRangeProfileReport =
     else None
 
 [<Test>]
-let ``profile baseline report writes big-deedle metrics when sibling repo exists`` () =
+let ``Can write LookupRange profile baseline when sibling repo exists`` () =
   match LookupRangeProfileReport.writeBigDeedleResults() with
   | Some path ->
       File.Exists(path) |> shouldEqual true
@@ -248,7 +305,7 @@ let ``profile baseline report writes big-deedle metrics when sibling repo exists
       LookupRangeProfileReport.collect() |> List.length |> shouldEqual 8
 
 [<Test>]
-let ``Step LookupRange filters virtually with zero ValueAt at filter time`` () =
+let ``Can filter with Step LookupRange without ValueAt at filter time`` () =
   let c, frame, words = InstrumentedOrdinalSource.createOrderedSearchFrame LookupRangeFixture.nLarge
   let filtered, filterDelta, _ = LookupRangeFixture.filterAndRead frame c 0
   filterDelta.LookupRangeCount |> shouldEqual 1
@@ -257,7 +314,7 @@ let ``Step LookupRange filters virtually with zero ValueAt at filter time`` () =
   filtered.RowCount |> shouldEqual (LookupRangeFixture.expectedMatchCount LookupRangeFixture.nLarge words.Length)
 
 [<Test>]
-let ``ExactFixed LookupRange is virtual but only retains first match`` () =
+let ``Can filter with ExactFixed LookupRange retaining first match only`` () =
   let words = "lorem ipsum dolor sit amet consectetur adipiscing elit".Split(' ')
   let c, frame, _ =
     InstrumentedOrdinalSource.createOrderedSearchFrameWith LookupRangeFixture.nLarge (LookupRangeExactFixed (fun v ->
@@ -270,7 +327,7 @@ let ``ExactFixed LookupRange is virtual but only retains first match`` () =
   filtered.RowCount |> shouldEqual 1
 
 [<Test>]
-let ``FullFixed LookupRange is virtual but retains entire series (naive)`` () =
+let ``Can filter with FullFixed LookupRange retaining entire series`` () =
   let c, frame, _ =
     InstrumentedOrdinalSource.createOrderedSearchFrameWith LookupRangeFixture.nLarge LookupRangeFullFixed
   let filtered, filterDelta, _ = LookupRangeFixture.filterAndRead frame c 0
@@ -280,7 +337,7 @@ let ``FullFixed LookupRange is virtual but retains entire series (naive)`` () =
   filtered.RowCount |> shouldEqual (int LookupRangeFixture.nLarge)
 
 [<Test>]
-let ``Ordinal frame filter uses LookupRange like ordered index`` () =
+let ``Can filter ordinal frame using LookupRange like ordered index`` () =
   let c, frame, words = InstrumentedOrdinalSource.createOrdinalSearchFrame LookupRangeFixture.nLarge
   let filtered, filterDelta, _ = LookupRangeFixture.filterAndReadOrdinal frame c 0
   filterDelta.LookupRangeCount |> shouldEqual 1
@@ -289,7 +346,7 @@ let ``Ordinal frame filter uses LookupRange like ordered index`` () =
   filtered.RowCount |> shouldEqual (LookupRangeFixture.expectedMatchCount LookupRangeFixture.nLarge words.Length)
 
 [<Test>]
-let ``Step path reads touch only requested rows after filter`` () =
+let ``Can read only requested rows after Step filter`` () =
   let c, frame, _ = InstrumentedOrdinalSource.createOrderedSearchFrame LookupRangeFixture.nLarge
   let readN = 20
   let _, filterDelta, readDelta = LookupRangeFixture.filterAndRead frame c readN
@@ -298,7 +355,7 @@ let ``Step path reads touch only requested rows after filter`` () =
   readDelta.ValueAtCount |> should be (lessThan (readN * 3))
 
 [<Test>]
-let ``FullFixed naive range pays full read cost even for few rows`` () =
+let ``Can pay full read cost with FullFixed naive range`` () =
   let c, frame, _ =
     InstrumentedOrdinalSource.createOrderedSearchFrameWith LookupRangeFixture.nLarge LookupRangeFullFixed
   let readN = 20
@@ -308,7 +365,7 @@ let ``FullFixed naive range pays full read cost even for few rows`` () =
   readDelta.ValueAtCount |> should be (lessThan (readN * 3))
 
 [<Test>]
-let ``Mapped search column without reverse lookup scans at filter time`` () =
+let ``Can scan mapped search column at filter time without reverse lookup`` () =
   let c, frame, words = InstrumentedOrdinalSource.createOrderedMappedSearchFrame LookupRangeFixture.nLarge
   c.Reset()
   let filtered = frame |> Frame.filterRowsBy "S2" (LookupRangeFixture.searchValue.ToUpperInvariant())
@@ -319,7 +376,7 @@ let ``Mapped search column without reverse lookup scans at filter time`` () =
   filtered.RowCount |> shouldEqual (LookupRangeFixture.expectedMatchCount LookupRangeFixture.nLarge words.Length)
 
 [<Test>]
-let ``Ordinal Step filter is same order of magnitude as ordered Step filter`` () =
+let ``Can filter ordinal Step within same order of magnitude as ordered Step`` () =
   let orderedMs =
     LookupRangeFixture.elapsedMs (fun () ->
       let c, frame, _ = InstrumentedOrdinalSource.createOrderedSearchFrame LookupRangeFixture.nTiming
@@ -333,7 +390,7 @@ let ``Ordinal Step filter is same order of magnitude as ordered Step filter`` ()
   ordinalMs |> should be (lessThan (max 50.0 (orderedMs * 5.0)))
 
 [<Test>]
-let ``Ordinal Step filter plus partial read matches ordered cost order`` () =
+let ``Can match ordered partial-read cost on ordinal Step filter`` () =
   let orderedMs =
     LookupRangeFixture.elapsedMs (fun () ->
       let c, frame, _ = InstrumentedOrdinalSource.createOrderedSearchFrame LookupRangeFixture.nTiming
@@ -351,7 +408,7 @@ let ``Ordinal Step filter plus partial read matches ordered cost order`` () =
 // ------------------------------------------------------------------------------------------------
 
 [<Test>]
-let ``Large vocabulary periodic data works with Step LookupRange`` () =
+let ``Can filter large vocabulary periodic data with Step LookupRange`` () =
   let vocabSize = 256
   let c, frame, words = InstrumentedOrdinalSource.createOrderedSearchFrameLargeVocab LookupRangeFixture.nLarge vocabSize
   let search = words.[0]
@@ -362,7 +419,7 @@ let ``Large vocabulary periodic data works with Step LookupRange`` () =
   filtered.RowCount |> shouldEqual (LookupRangeFixture.expectedMatchCount LookupRangeFixture.nLarge vocabSize)
 
 [<Test>]
-let ``Sparse irregular matches work with IndexList LookupRange`` () =
+let ``Can filter sparse irregular matches with IndexList LookupRange`` () =
   let modulus = 997L
   let remainder = 42L
   let c, frame, trueCount = InstrumentedOrdinalSource.createOrderedSearchFrameSparse LookupRangeFixture.nLarge modulus remainder
@@ -374,7 +431,7 @@ let ``Sparse irregular matches work with IndexList LookupRange`` () =
   trueCount |> should be (lessThan (int LookupRangeFixture.nLarge / 100))
 
 [<Test>]
-let ``Wrong Step on sparse data over-filters virtual index`` () =
+let ``Can over-filter sparse data with wrong Step LookupRange`` () =
   let modulus = 997L
   let remainder = 42L
   let c, frame, trueCount = InstrumentedOrdinalSource.createOrderedSearchFrameSparseWrongStep LookupRangeFixture.nLarge modulus remainder
@@ -386,7 +443,7 @@ let ``Wrong Step on sparse data over-filters virtual index`` () =
   filtered.RowCount |> should be (greaterThan (int LookupRangeFixture.nLarge / 200))
 
 [<Test>]
-let ``clipLookupRange remaps IndexList after Fixed slice`` () =
+let ``Can remap IndexList via clipLookupRange after Fixed slice`` () =
   let modulus = 997L
   let remainder = 42L
   let n = 10_000L
@@ -398,7 +455,7 @@ let ``clipLookupRange remaps IndexList after Fixed slice`` () =
   FrameProbe.rowIndexIsVirtual filtered2 |> shouldEqual true
 
 [<Test>]
-let ``ordinal and ordered Step filters return the same row count`` () =
+let ``Can return same row count for ordinal and ordered Step filters`` () =
   let n = 10_000L
   let search = "lorem"
   let _, ordered, _ = InstrumentedOrdinalSource.createOrderedSearchFrame n
@@ -419,10 +476,73 @@ let ``ordinal filterRowsBy without LookupRange throws NotSupportedException`` ()
   |> should throw typeof<NotSupportedException>
 
 [<Test>]
-let ``filterRowsBy on ordinal row index uses LookupRange when configured`` () =
+let ``Can filter ordinal row index when LookupRange is configured`` () =
   let c, frame, words = InstrumentedOrdinalSource.createOrdinalSearchFrame 1000L
   c.Reset()
   let filtered = frame |> Frame.filterRowsBy "S2" words.[0]
   FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
   c.Snapshot().LookupRangeCount |> should be (greaterThan 0)
   c.Snapshot().ValueAtCount |> shouldEqual 0
+
+// ------------------------------------------------------------------------------------------------
+// LookupRangeExecutor (src/Deedle/VirtualLookupRange.fs)
+// ------------------------------------------------------------------------------------------------
+
+[<Test>]
+let ``Can intersect identical Step LookupRanges`` () =
+  match LookupRangeExecutor.intersect (Range.step 0 8) (Range.step 0 8) with
+  | RangeRestriction.Custom(:? StepRange as s) ->
+      s.Offset |> shouldEqual 0
+      s.Step |> shouldEqual 8
+  | other -> failwithf "expected StepRange, got %A" other
+
+[<Test>]
+let ``Can intersect disjoint Step LookupRanges to empty range`` () =
+  match LookupRangeExecutor.intersect (Range.step 0 8) (Range.step 1 8) with
+  | RangeRestriction.Custom ar -> Seq.length ar |> shouldEqual 0
+  | other -> failwithf "expected empty custom range, got %A" other
+
+[<Test>]
+let ``Can intersect Step LookupRange with IndexList without enumerating Step`` () =
+  let step = RangeRestriction.Custom { Offset = 0; Step = 2 } : RangeRestriction<Address>
+  let listAddrs = [ 0L; 2L; 3L; 4L; 7L ] |> List.map Address.ofInt64
+  let list =
+    ({ new IRangeRestriction<Address> with
+        member _.Count = int64 listAddrs.Length
+       interface seq<Address> with
+         member _.GetEnumerator() = (listAddrs :> seq<_>).GetEnumerator()
+       interface System.Collections.IEnumerable with
+         member _.GetEnumerator() = (listAddrs :> seq<_>).GetEnumerator() :> System.Collections.IEnumerator }
+     |> RangeRestriction.Custom)
+  let addrsOf = function
+    | RangeRestriction.Custom ar -> ar |> Seq.map Address.asInt64 |> Seq.toList
+    | _ -> failwith "expected Custom range"
+  addrsOf (LookupRangeExecutor.intersect step list) |> shouldEqual [ 0L; 2L; 4L ]
+  addrsOf (LookupRangeExecutor.intersect list step) |> shouldEqual [ 0L; 2L; 4L ]
+
+[<Test>]
+let ``Can intersect overlapping Fixed LookupRanges`` () =
+  match LookupRangeExecutor.intersect (Range.fixedRange 0 10) (Range.fixedRange 5 15) with
+  | RangeRestriction.Fixed(lo, hi) ->
+      Address.asInt64 lo |> shouldEqual 5
+      Address.asInt64 hi |> shouldEqual 10
+  | other -> failwithf "expected Fixed overlap, got %A" other
+
+[<Test>]
+let ``Can intersect disjoint Fixed LookupRanges to empty range`` () =
+  match LookupRangeExecutor.intersect (Range.fixedRange 0 3) (Range.fixedRange 10 12) with
+  | RangeRestriction.Fixed _ -> failwith "expected empty intersection"
+  | RangeRestriction.Custom ar -> Seq.isEmpty ar |> shouldEqual true
+  | other -> failwithf "expected empty Fixed intersection, got %A" other
+
+[<Test>]
+let ``LookupRangeExecutor returns empty range for invalid Step offset`` () =
+  let mode = LookupRangeStep (fun _ -> (-1, 4))
+  match LookupRangeExecutor.lookupRange 16L mode "x" "test" with
+  | RangeRestriction.Custom ar -> Seq.isEmpty ar |> shouldEqual true
+  | other -> failwithf "expected empty custom range, got %A" other
+
+[<Test>]
+let ``LookupRangeExecutor raises NotSupportedException when LookupRange is unsupported`` () =
+  (fun () -> LookupRangeExecutor.lookupRange 8L LookupRangeUnsupported "x" "test" |> ignore)
+  |> should throw typeof<NotSupportedException>

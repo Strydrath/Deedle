@@ -22,6 +22,12 @@ open Deedle.Vectors.Virtual
 
 module Address = LinearAddress
 
+/// LookupRange helpers aligned with production [`VirtualLookupRange`].
+[<RequireQualifiedAccess>]
+module VirtualLookupRangeTest =
+  /// Step lookup for periodic vocabulary — same semantics as [`VirtualLookupRange.forRepeatingCycle`].
+  let repeatingCycle (words: 'T[]) = VirtualLookupRange.forRepeatingCycle words
+
 // ------------------------------------------------------------------------------------------------
 // Access counters & snapshots (deterministic metrics — no wall clock)
 // ------------------------------------------------------------------------------------------------
@@ -258,19 +264,16 @@ module InstrumentedOrdinalSource =
   let createStrings (length: int64) (words: string[]) =
     let c = AccessCounters()
     let valueAt i = words.[int (i % int64 words.Length)]
+    // ExactFixed: tests filter known values only; unknown keys are not part of this profile.
     let indexOf v =
       let o = words |> Array.findIndex ((=) v) |> int64
-      // Fixed first-hit window (ExactFixed quality studied separately)
       o, o
     c, InstrumentedOrdinalSource<string>(length, valueAt, c, lookupRange=LookupRangeExactFixed indexOf, hasMissing=false)
 
   let createSearchableStrings (length: int64) (words: string[]) =
     let c = AccessCounters()
     let valueAt i = words.[int (i % int64 words.Length)]
-    let search v =
-      let o = words |> Array.findIndex ((=) v)
-      o, words.Length
-    c, InstrumentedOrdinalSource<string>(length, valueAt, c, lookupRange=LookupRangeStep search, hasMissing=false)
+    c, InstrumentedOrdinalSource<string>(length, valueAt, c, lookupRange=VirtualLookupRangeTest.repeatingCycle words, hasMissing=false)
 
   let createTimes (length: int64) =
     let c = AccessCounters()
@@ -319,7 +322,7 @@ module InstrumentedOrdinalSource =
     let valueAt i = words.[int (i % int64 words.Length)]
     let lookup =
       match lookupRange with
-      | LookupRangeStep _ -> LookupRangeStep (fun v -> words |> Array.findIndex ((=) v), words.Length)
+      | LookupRangeStep _ -> VirtualLookupRangeTest.repeatingCycle words
       | other -> other
     let c, frame = createOrderedSearchFrameCore length valueAt lookup
     c, frame, words
@@ -328,7 +331,7 @@ module InstrumentedOrdinalSource =
   let createOrderedSearchFrameLargeVocab (length: int64) (vocabSize: int) =
     let words = [| for i in 0 .. vocabSize - 1 -> sprintf "w%04d" i |]
     let valueAt i = words.[int (i % int64 vocabSize)]
-    let lookup = LookupRangeStep (fun v -> words |> Array.findIndex ((=) v), vocabSize)
+    let lookup = VirtualLookupRangeTest.repeatingCycle words
     let c, frame = createOrderedSearchFrameCore length valueAt lookup
     c, frame, words
 
@@ -366,63 +369,10 @@ module InstrumentedOrdinalSource =
   let createOrdinalSearchFrame (length: int64) =
     let words = "lorem ipsum dolor sit amet consectetur adipiscing elit".Split(' ')
     let c = AccessCounters()
-    let search v =
-      let o = words |> Array.findIndex ((=) v)
-      o, words.Length
     let s1 = InstrumentedOrdinalSource<int64>(length, id, c, asLong=id, hasMissing=false)
     let s2 =
       InstrumentedOrdinalSource<string>
-        (length, (fun i -> words.[int (i % int64 words.Length)]), c, lookupRange=LookupRangeStep search, hasMissing=false)
+        (length, (fun i -> words.[int (i % int64 words.Length)]), c, lookupRange=VirtualLookupRangeTest.repeatingCycle words, hasMissing=false)
     let frame = Virtual.CreateOrdinalFrame(["S1"; "S2"], [s1 :> IVirtualVectorSource; s2 :> IVirtualVectorSource])
     c, frame, words
 
-// ------------------------------------------------------------------------------------------------
-// Smoke tests
-// ------------------------------------------------------------------------------------------------
-
-[<Test>]
-let ``KeyCount does not touch ValueAt`` () =
-  let c, series = InstrumentedOrdinalSource.createOrdinalSeries 1_000_000L
-  c.Reset()
-  series.KeyCount |> shouldEqual 1_000_000
-  c.Snapshot().ValueAtCount |> shouldEqual 0
-  SeriesProbe.isVirtual series |> shouldEqual true
-
-[<Test>]
-let ``Formatting touches only a few ValueAt calls`` () =
-  let c, series = InstrumentedOrdinalSource.createOrdinalSeries 1_000_000L
-  c.Reset()
-  series.Format(3, 3, false) |> ignore
-  let snap = c.Snapshot()
-  snap.ValueAtCount |> should be (lessThan 20)
-  SeriesProbe.isVirtual series |> shouldEqual true
-
-[<Test>]
-let ``Slicing preserves virtual storage and records GetSubVector`` () =
-  let c, series = InstrumentedOrdinalSource.createOrdinalSeries 1_000_000L
-  c.Reset()
-  let sliced = series.[10L .. 20L]
-  let snap = c.Snapshot()
-  snap.GetSubVectorCount |> should be (greaterThan 0)
-  snap.ValueAtCount |> shouldEqual 0
-  SeriesProbe.isVirtual sliced |> shouldEqual true
-  sliced.KeyCount |> shouldEqual 11
-
-[<Test>]
-let ``Materialize flips series to linear storage`` () =
-  let c, series = InstrumentedOrdinalSource.createOrdinalSeries 100L
-  SeriesProbe.isVirtual series |> shouldEqual true
-  let mat = series.Materialize()
-  SeriesProbe.isLinear mat |> shouldEqual true
-  // Materialize reads data
-  c.Snapshot().ValueAtCount |> should be (greaterThan 0)
-
-[<Test>]
-let ``Delta snapshot isolates operation cost`` () =
-  let c, series = InstrumentedOrdinalSource.createOrdinalSeries 10_000L
-  let before = c.Snapshot()
-  series.Format(2, 2, false) |> ignore
-  let after = c.Snapshot()
-  let d = AccessSnapshot.delta before after
-  d.ValueAtCount |> should be (greaterThan 0)
-  d.ValueAtCount |> shouldEqual (after.ValueAtCount - before.ValueAtCount)
