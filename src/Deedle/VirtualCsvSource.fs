@@ -44,6 +44,40 @@ module internal CsvParsing =
     acc.Add(sb.ToString().TrimEnd('\r', '\n'))
     acc.ToArray()
 
+  /// Scan a UTF-8 CSV for physical line starts (CRLF/LF). Does not treat quoted embedded newlines as one record.
+  let indexPhysicalLineOffsets (path: string) (skipHeader: bool) =
+    use fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read)
+    if fs.Length >= 3L then
+      let bom = Array.zeroCreate 3
+      fs.Read(bom, 0, 3) |> ignore
+      if bom.[0] <> 0xEFuy || bom.[1] <> 0xBBuy || bom.[2] <> 0xBFuy then
+        fs.Seek(0L, SeekOrigin.Begin) |> ignore
+    let offs = ResizeArray<int64>()
+    let mutable skip = skipHeader
+    let mutable lineStart = fs.Position
+    let rec consume () =
+      let b = fs.ReadByte()
+      if b < 0 then
+        if not skip && fs.Position > lineStart then offs.Add(lineStart)
+      elif b = 10 then
+        if not skip then offs.Add(lineStart)
+        skip <- false
+        lineStart <- fs.Position
+        consume ()
+      else consume ()
+    consume ()
+    offs.ToArray()
+
+  let readPhysicalLineAt (path: string) (offset: int64) =
+    use fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read)
+    fs.Seek(offset, SeekOrigin.Begin) |> ignore
+    let buf = ResizeArray<byte>()
+    let mutable b = fs.ReadByte()
+    while b >= 0 && b <> 10 do
+      if b <> 13 then buf.Add(byte b)
+      b <- fs.ReadByte()
+    Encoding.UTF8.GetString(buf.ToArray())
+
   let field (fields: string[]) (columnIndex: int) =
     if columnIndex >= fields.Length then
       failwithf "VirtualCsvSource: column %d missing (fields=%d)" columnIndex fields.Length
@@ -77,22 +111,29 @@ module internal CsvParsing =
     | Some idx -> idx
     | None -> failwithf "VirtualCsvSource: column '%s' not found in header" name
 
-/// Shared line index for one CSV file (built once, reused by column sources).
-type CsvLineIndex(path: string, ?skipHeader: bool) =
+/// Shared row index for one CSV file (built once, reused by column sources).
+/// Default backend caches physical line text. [`byteOffset`] stores only start offsets and seeks on read.
+type CsvLineIndex(path: string, ?skipHeader: bool, ?byteOffset: bool) =
   let skipHeader = defaultArg skipHeader true
-  let lines =
-    use reader = new StreamReader(path)
-    if skipHeader then reader.ReadLine() |> ignore
-    let acc = ResizeArray<string>()
-    while not reader.EndOfStream do
-      acc.Add(reader.ReadLine())
-    acc.ToArray()
-  let fieldCache : string[][] = Array.create lines.Length null
+  let byteOffset = defaultArg byteOffset false
+  let lines, offsets =
+    if byteOffset then
+      [||], CsvParsing.indexPhysicalLineOffsets path skipHeader
+    else
+      use reader = new StreamReader(path)
+      if skipHeader then reader.ReadLine() |> ignore
+      let acc = ResizeArray<string>()
+      while not reader.EndOfStream do
+        acc.Add(reader.ReadLine())
+      acc.ToArray(), [||]
+  let rowCount = if byteOffset then offsets.Length else lines.Length
+  let fieldCache : string[][] = Array.create rowCount null
   let cacheLock = obj()
   let mutable splitCount = 0
 
   member _.Path = path
-  member _.Length = int64 lines.Length
+  member _.Length = int64 rowCount
+  member _.IsByteOffset = byteOffset
   /// Number of CSV rows split since construction or last [`ResetSplitCount`].
   member _.SplitCount = splitCount
   /// Reset [`SplitCount`] (for tests and diagnostics).
@@ -108,7 +149,8 @@ type CsvLineIndex(path: string, ?skipHeader: bool) =
           match fieldCache.[i] with
           | null ->
               splitCount <- splitCount + 1
-              let fields = CsvParsing.splitCsvLine lines.[i]
+              let raw = if byteOffset then CsvParsing.readPhysicalLineAt path offsets.[i] else lines.[i]
+              let fields = CsvParsing.splitCsvLine raw
               fieldCache.[i] <- fields
               fields
           | fields -> fields)
@@ -199,7 +241,7 @@ module VirtualCsvSource =
   /// Build a virtual frame from an indexed CSV file.
   let createFrame (csvPath: string) (options: VirtualReadCsvOptions) =
     if not (File.Exists csvPath) then failwithf "VirtualCsvSource: file not found '%s'" csvPath
-    let lineIndex = CsvLineIndex(csvPath)
+    let lineIndex = CsvLineIndex(csvPath, byteOffset=options.ByteOffsetIndex)
     if lineIndex.Length = 0L then invalidArg "csvPath" "CSV has no data rows"
     let header = lineIndex.HeaderColumns
     if header.Length = 0 then invalidArg "csvPath" "CSV has no header row"
@@ -239,6 +281,55 @@ module VirtualCsvSource =
   /// Resolve index column using the same rules as [`createFrame`].
   let resolveIndexColumnName (header: string[]) (options: VirtualReadCsvOptions) =
     header.[resolveIndexColumn header options]
+
+  /// Map a global ordinal row to (part index, row-in-part).
+  let private locatePartRow (partSizes: int[]) (i: int64) =
+    let rec loop part acc =
+      let n = int64 partSizes.[part]
+      if i < acc + n then part, i - acc
+      else loop (part + 1) (acc + n)
+    loop 0 0L
+
+  /// Concatenate CSV files as one ordinal virtual frame (sorted paths). Shared schema required.
+  /// Uses linear 0..N-1 addressing so existing [`OrdinalVirtualSource`] LookupRange applies as-is.
+  let createConcatenatedFrame (csvPaths: string[]) (options: VirtualReadCsvOptions) =
+    if csvPaths.Length = 0 then invalidArg "csvPaths" "At least one CSV file is required"
+    let indexes =
+      csvPaths |> Array.map (fun p ->
+        if not (File.Exists p) then failwithf "VirtualCsvSource: file not found '%s'" p
+        CsvLineIndex(p, byteOffset=options.ByteOffsetIndex))
+    if indexes |> Array.exists (fun i -> i.Length = 0L) then invalidArg "csvPaths" "CSV part has no data rows"
+    let header = indexes.[0].HeaderColumns
+    if header.Length = 0 then invalidArg "csvPaths" "CSV has no header row"
+    for i in 1 .. indexes.Length - 1 do
+      if indexes.[i].HeaderColumns <> header then
+        failwithf "VirtualCsvSource: schema mismatch in '%s'" csvPaths.[i]
+    let partSizes = indexes |> Array.map (fun i -> int i.Length)
+    let total = partSizes |> Array.sumBy int64
+    let keys =
+      match options.ColumnKeys with
+      | Some ks -> ks
+      | None -> Array.toList header
+    let makeColumn name =
+      let colIdx = columnIndex header name
+      let kind = inferColumnKind indexes.[0] colIdx 100
+      let lookup = resolveSearchLookupRange indexes.[0] header colIdx name kind options
+      let cell i =
+        let part, row = locatePartRow partSizes i
+        field (indexes.[part].ReadFields row) colIdx
+      let sourceOf parse asLong lookupRange =
+        let valueAt i =
+          let s = cell i
+          if isMissingCell s then OptionalValue.Missing
+          else match parse s with Some v -> OptionalValue(v) | None -> OptionalValue.Missing
+        OrdinalVirtualSource(total, valueAt, "csv-file", ?asLong=asLong, ?lookupRange=lookupRange)
+        :> IVirtualVectorSource
+      match kind with
+      | "datetime" -> sourceOf tryParseDateTime (Some (fun dto -> dto.UtcTicks)) None
+      | "int64" -> sourceOf tryParseInt64 (Some id) None
+      | "float" -> sourceOf tryParseFloat None None
+      | _ -> sourceOf (fun s -> Some s) None lookup
+    Virtual.CreateOrdinalFrame(keys, keys |> List.map makeColumn)
 
 /// Test-data helpers (also used by benchmarks). Not required for reading arbitrary CSVs.
 module CsvTestData =
@@ -350,6 +441,7 @@ module CsvTestData =
 
 namespace Deedle.Virtual
 
+open System.IO
 open Deedle.Virtual.Sources
 
 [<AutoOpen>]
@@ -357,7 +449,7 @@ module VirtualCsvExtensions =
   type Virtual with
     /// Load a CSV file as a virtual frame with an ordered row index.
     /// The index column defaults to `Timestamp` / `DateTime` / first date-like column when not specified.
-    static member ReadCsv(path: string, ?indexColumn: string, ?searchColumn: string, ?searchLookupRange: LookupRangeMode<string>, ?columnKeys: string list) =
+    static member ReadCsv(path: string, ?indexColumn: string, ?searchColumn: string, ?searchLookupRange: LookupRangeMode<string>, ?columnKeys: string list, ?byteOffsetIndex: bool) =
       let searchCol =
         match searchColumn with
         | None -> None
@@ -365,10 +457,37 @@ module VirtualCsvExtensions =
             match searchLookupRange with
             | Some mode -> Some(name, mode)
             | None ->
-                // Defer inference to createFrame (needs file content).
                 Some(name, LookupRangeUnsupported)
       let options : VirtualReadCsvOptions =
         { IndexColumn = indexColumn
           SearchColumn = searchCol
-          ColumnKeys = columnKeys }
+          ColumnKeys = columnKeys
+          ByteOffsetIndex = defaultArg byteOffsetIndex false }
       VirtualCsvSource.createFrame path options
+
+    /// Load matching CSV files in a directory as one ordinal virtual frame (files sorted by name).
+    /// Rows are addressed 0 .. N-1 across files; all files must share the first file's header.
+    static member ReadCsvDirectory
+        ( directory: string,
+          ?searchPattern: string,
+          ?searchColumn: string,
+          ?searchLookupRange: LookupRangeMode<string>,
+          ?columnKeys: string list,
+          ?byteOffsetIndex: bool ) =
+      if not (Directory.Exists directory) then failwithf "VirtualCsvSource: directory not found '%s'" directory
+      let pattern = defaultArg searchPattern "*.csv"
+      let files = Directory.GetFiles(directory, pattern) |> Array.sort
+      if files.Length = 0 then invalidArg "directory" (sprintf "No files matching '%s' in '%s'" pattern directory)
+      let searchCol =
+        match searchColumn with
+        | None -> None
+        | Some name ->
+            match searchLookupRange with
+            | Some mode -> Some(name, mode)
+            | None -> Some(name, LookupRangeUnsupported)
+      let options : VirtualReadCsvOptions =
+        { IndexColumn = None
+          SearchColumn = searchCol
+          ColumnKeys = columnKeys
+          ByteOffsetIndex = defaultArg byteOffsetIndex false }
+      VirtualCsvSource.createConcatenatedFrame files options

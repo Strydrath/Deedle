@@ -425,3 +425,51 @@ let ``ReadCsv throws when index column cell is invalid`` () =
     |> should throw typeof<System.FormatException>
   finally
     if File.Exists path then File.Delete path
+
+[<Test>]
+let ``Can read CSV via byte-offset row index matching the line cache`` () =
+  let path = Path.Combine(Path.GetTempPath(), "deedle-csv-byte-offset.csv")
+  File.WriteAllText(
+    path,
+    "Timestamp,Id,Category\r\n" +
+    "2000-01-01T00:00:00.0000000+00:00,1,a\r\n" +
+    "2000-01-01T00:00:01.0000000+00:00,2,b\r\n" +
+    "2000-01-01T00:00:02.0000000+00:00,3,c\r\n")
+  try
+    let cached = CsvLineIndex(path)
+    let seeked = CsvLineIndex(path, byteOffset=true)
+    cached.IsByteOffset |> shouldEqual false
+    seeked.IsByteOffset |> shouldEqual true
+    seeked.Length |> shouldEqual cached.Length
+    for i in 0L .. cached.Length - 1L do
+      seeked.ReadFields(i) |> shouldEqual (cached.ReadFields(i))
+    let frame = Virtual.ReadCsv(path, indexColumn="Timestamp", columnKeys=["Id"; "Category"], byteOffsetIndex=true)
+    frame.RowCount |> shouldEqual 3
+    frame.GetColumn<int64>("Id").GetAt(2) |> shouldEqual 3L
+  finally
+    if File.Exists path then File.Delete path
+
+[<Test>]
+let ``Can concatenate csv-parts directory as a partitioned virtual frame`` () =
+  let dir = Path.Combine(Path.GetTempPath(), "deedle-csv-parts")
+  if Directory.Exists dir then Directory.Delete(dir, true)
+  Directory.CreateDirectory dir |> ignore
+  let p1 = Path.Combine(dir, "part-a.csv")
+  let p2 = Path.Combine(dir, "part-b.csv")
+  File.WriteAllText(p1, "Id,Category\r\n1,a\r\n2,b\r\n")
+  File.WriteAllText(p2, "Id,Category\r\n3,a\r\n4,b\r\n")
+  try
+    let frame =
+      Virtual.ReadCsvDirectory(
+        dir,
+        searchColumn="Category",
+        searchLookupRange=VirtualLookupRange.forRepeatingCycle [| "a"; "b" |],
+        byteOffsetIndex=true)
+    FrameProbe.rowIndexIsVirtual frame |> shouldEqual true
+    frame.RowCount |> shouldEqual 4
+    frame.GetColumn<int64>("Id").GetAt(0) |> shouldEqual 1L
+    frame.GetColumn<int64>("Id").GetAt(3) |> shouldEqual 4L
+    let filtered = frame |> Frame.filterRowsBy "Category" "a"
+    filtered.RowCount |> shouldEqual 2
+  finally
+    if Directory.Exists dir then Directory.Delete(dir, true)
