@@ -188,3 +188,13 @@ type VirtualBenchmarks() =
     [<Benchmark>]
     member _.Join_IdenticalOrdinalFrames() =
         joinLeft.Join(joinRight, JoinKind.Outer) |> ignore
+
+    /// First mini-batch only — early-stop ML path (B16).
+    [<Benchmark>]
+    member _.MaterializeFloatBatches_First1k() =
+        Virtual.MaterializeFloatBatches(joinLeft, 1000L, ["A"]) |> Seq.head |> ignore
+
+    /// Drain all batches — full feature matrix, still without one giant allocation.
+    [<Benchmark>]
+    member _.MaterializeFloatBatches_Full() =
+        Virtual.MaterializeFloatBatches(joinLeft, 1000L, ["A"]) |> Seq.length |> ignore

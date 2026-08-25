@@ -89,12 +89,15 @@ type VirtualReadCsvOptions =
     /// Optional searchable string column and its LookupRange mode.
     SearchColumn: (string * LookupRangeMode<string>) option
     /// Explicit column keys (defaults to all CSV columns except index column).
-    ColumnKeys: string list option }
+    ColumnKeys: string list option
+    /// When true, index rows by file byte offset instead of caching every physical line in RAM.
+    ByteOffsetIndex: bool }
 
   static member Default =
     { IndexColumn = None
       SearchColumn = None
-      ColumnKeys = None }
+      ColumnKeys = None
+      ByteOffsetIndex = false }
 
 /// Provides static methods for creating virtual series and virtual frames.
 /// Those provide necessary wrapping around `IVirtualVectorSource` values
@@ -143,6 +146,85 @@ type Virtual private () =
   /// The value source does not need to implement lookup - mainly `ValueAt`, merging and getting sub-source
   static member CreateFrame(indexSource:IVirtualVectorSource<_>, keys, sources:seq<IVirtualVectorSource>) =
     createFrame (VirtualOrderedIndex indexSource) (Index.ofKeys (ReadOnlyCollection.ofSeq keys)) sources
+
+/// Missing-value handling used by [`Virtual.MaterializeFloatBatches`].
+type FloatMissingPolicy =
+  /// Map missing cells to `Double.NaN`.
+  | NaN
+  /// Map missing cells to a caller-supplied float.
+  | Value of float
+
+/// One mini-batch from [`Virtual.MaterializeFloatBatches`].
+/// `Features.[row].[col]` is row-major; `RowKeys` is present only when requested.
+type FloatBatch<'TRowKey> =
+  { Features : float[][]
+    RowKeys : 'TRowKey[] option }
+
+type Virtual with
+  /// <summary>
+  /// Materialize selected float columns as a lazy sequence of mini-batches.
+  /// Each batch is produced by slicing the frame with <c>GetAddressRange</c> and reading
+  /// only those rows × columns. Enumerating later batches does not re-read earlier rows
+  /// or allocate a full-frame feature matrix.
+  /// </summary>
+  /// <param name="frame">Source frame (virtual or in-memory).</param>
+  /// <param name="batchSize">Positive number of rows per batch (last batch may be smaller).</param>
+  /// <param name="columns">Column keys to materialize as <c>float</c>.</param>
+  /// <param name="missingPolicy">How to replace missing cells (default <see cref="FloatMissingPolicy.NaN"/>).</param>
+  /// <param name="includeRowKeys">When set, also copy this batch's row keys (may touch the key source).</param>
+  static member MaterializeFloatBatches
+    (frame:Frame<'TRowKey, 'TColumnKey>,
+     batchSize:int64,
+     columns:'TColumnKey list,
+     ?missingPolicy:FloatMissingPolicy,
+     ?includeRowKeys:bool)
+      : seq<FloatBatch<'TRowKey>> =
+    if batchSize <= 0L then invalidArg "batchSize" "Must be positive"
+
+    let missingPolicy = defaultArg missingPolicy FloatMissingPolicy.NaN
+    let missingValue =
+      match missingPolicy with
+      | FloatMissingPolicy.NaN -> Double.NaN
+      | FloatMissingPolicy.Value v -> v
+
+    let includeRowKeys = defaultArg includeRowKeys false
+    let columnsArr = columns |> List.toArray
+
+    seq {
+      let total = frame.RowIndex.KeyCount
+      let mutable start = 0L
+      while start < total do
+        let last = min (total - 1L) (start + batchSize - 1L)
+        let loAddr = frame.RowIndex.AddressAt(start)
+        let hiAddr = frame.RowIndex.AddressAt(last)
+        let batchFrame = frame.GetAddressRange(RangeRestriction.Fixed(loAddr, hiAddr))
+
+        let rowCount = int batchFrame.RowIndex.KeyCount
+        let colCount = columnsArr.Length
+
+        // Materialize only selected columns for this batch.
+        let colArrays =
+          columnsArr
+          |> Array.map (fun colKey ->
+            let s = batchFrame.GetColumn<float>(colKey)
+            s.Vector.DataSequence
+            |> Seq.map (fun v ->
+              match v with
+              | OptionalValue.Present x -> x
+              | OptionalValue.Missing -> missingValue)
+            |> Seq.toArray)
+
+        let features =
+          Array.init rowCount (fun rowIdx ->
+            Array.init colCount (fun colIdx -> colArrays.[colIdx].[rowIdx]))
+
+        let rowKeysOpt =
+          if includeRowKeys then Some (batchFrame.RowIndex.KeySequence |> Seq.toArray)
+          else None
+
+        yield { Features = features; RowKeys = rowKeysOpt }
+        start <- last + 1L
+    }
 
 /// Ordinal pull-on-read virtual source with optional LookupRange semantics.
 type OrdinalVirtualSource<'T>
