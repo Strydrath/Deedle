@@ -8,6 +8,9 @@
 - **`VirtualLookupRange` helpers**: `forRepeatingCycle`, `forCategorical`, `forCategoricalScan`, and `scan` for configuring searchable string columns on virtual sources. Unknown cycle values yield an empty filter range (no throw).
 - **CSV virtual backend** (`Deedle.Virtual.Sources`): `CsvLineIndex`, `VirtualCsvSource`, and `CsvTestData` helpers for file-backed Big Deedle experiments.
 - **`Frame.filterRowsBy2`**: intersect two column predicates in one virtual `LookupRange` / `GetSubVector` pass (falls back to sequential `filterRowsBy` on linear frames).
+- **`Virtual.MaterializeFloatBatches`** (B16): lazily materialize selected float columns into per-batch `float[][]` feature matrices from a virtual frame. Missing cells map to `NaN` by default, or a caller-supplied `FloatMissingPolicy.Value`.
+- **`Virtual.ReadCsvDirectory`** (B16): load a folder of same-schema CSVs as one ordinal virtual frame (`OrdinalVirtualSource` concat).
+- **CSV byte-offset index** (B16): `CsvLineIndex(..., byteOffset=true)` and `Virtual.ReadCsv(..., byteOffsetIndex=true)` seek to physical line starts instead of caching every line string.
 - **Virtual `Series.shift` / `Series.diff` / `Series.pctChange`**: stay on the virtual addressing scheme (no full materialize). `Frame.shift` / `Frame.diff` / `Frame.pctChange` use the frame's vector builder so virtual columns stay virtual.
 - **Virtual fixed windows**: `Series.windowSize` / `chunkSize` build nested window series via `GetAddressRange` (virtual slices). Aggregating those windows still materializes the result series of scalars.
 - **Virtual ordinal Join / Zip** of identical key ranges (and inner zip of overlapping single-block ordinal slices) keep a virtual row index. Mismatched keys, `joinOn`, and nearest-key lookup still materialize.

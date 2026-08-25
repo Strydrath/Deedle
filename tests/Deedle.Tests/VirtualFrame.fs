@@ -682,7 +682,115 @@ let ``Can merge virtual series of rows indexed by time`` () =
   fmr.[ith 7000000L] |> shouldEqual <| fer.[ith 7000000L]
   fmr.[ith 7670246L] |> shouldEqual <| fer.[ith 7670246L]
 
+// ------------------------------------------------------------------------------------------------
+// B16 — batch materialization iterator
+// ------------------------------------------------------------------------------------------------
 
+[<Test>]
+let ``Can materialize float batches lazily reading only per-batch rows`` () =
+  let len = 100L
+  let batchSize = 10L
+
+  let counters = AccessCounters()
+  let srcA =
+    InstrumentedOrdinalSource<float>(len, (fun i -> float i), counters, hasMissing=false)
+    :> IVirtualVectorSource
+  let srcB =
+    InstrumentedOrdinalSource<float>(len, (fun i -> float i + 1_000_000.0), counters, hasMissing=false)
+    :> IVirtualVectorSource
+  let frame = Virtual.CreateOrdinalFrame(["A"; "B"], [ srcA; srcB ])
+
+  let batches = Virtual.MaterializeFloatBatches(frame, batchSize, ["A"; "B"])
+  counters.ValueAtCount |> shouldEqual 0
+
+  use e = batches.GetEnumerator()
+  ignore (e.MoveNext())
+  let b1 = e.Current
+
+  b1.Features.Length |> shouldEqual 10
+  b1.Features.[0].Length |> shouldEqual 2
+  b1.Features.[0].[0] |> shouldEqual 0.0
+  b1.Features.[9].[0] |> shouldEqual 9.0
+  b1.Features.[0].[1] |> shouldEqual 1_000_000.0
+
+  let after1 = counters.Snapshot()
+  after1.ValueAtCount |> shouldEqual (int (batchSize * 2L))
+  after1.ValueAtCount |> should be (lessThan (int (len * 2L)))
+
+  ignore (e.MoveNext())
+  let _b2 = e.Current
+  let after2 = counters.Snapshot()
+  after2.ValueAtCount |> shouldEqual (int (batchSize * 2L * 2L)) // 2 batches × 10 rows × 2 columns
+
+[<Test>]
+let ``Can map missing values to NaN in float batches by default`` () =
+  let len = 12L
+  let batchSize = 12L
+
+  let counters = AccessCounters()
+  let srcA =
+    InstrumentedOrdinalSource<float>(len, (fun i -> float i), counters, hasMissing=true, addrMap=id)
+    :> IVirtualVectorSource
+  let frame = Virtual.CreateOrdinalFrame(["A"], [ srcA ])
+
+  let (batch : FloatBatch<int64>) = Virtual.MaterializeFloatBatches(frame, batchSize, ["A"]) |> Seq.head
+  let f = batch.Features
+
+  // Missing condition in InstrumentedOrdinalSource: absAddr % 3L = 0L => indices 0, 3, 6, 9
+  (Double.IsNaN f.[0].[0]) |> shouldEqual true
+  f.[1].[0] |> shouldEqual 1.0
+  (Double.IsNaN f.[3].[0]) |> shouldEqual true
+  (Double.IsNaN f.[9].[0]) |> shouldEqual true
+
+[<Test>]
+let ``Can materialize a partial last batch with optional row keys`` () =
+  let len = 25L
+  let batchSize = 10L
+
+  let counters = AccessCounters()
+  let srcA =
+    InstrumentedOrdinalSource<float>(len, (fun i -> float i), counters, hasMissing=false)
+    :> IVirtualVectorSource
+  let frame = Virtual.CreateOrdinalFrame(["A"], [ srcA ])
+
+  let batches = Virtual.MaterializeFloatBatches(frame, batchSize, ["A"], includeRowKeys=true)
+  let bs = batches |> Seq.toArray
+
+  bs.Length |> shouldEqual 3
+  bs.[0].Features.Length |> shouldEqual 10
+  bs.[1].Features.Length |> shouldEqual 10
+  bs.[2].Features.Length |> shouldEqual 5
+
+  let rowKeys = bs.[2].RowKeys.Value
+  rowKeys |> shouldEqual [| 20L; 21L; 22L; 23L; 24L |]
+
+  // Row-key extraction should not introduce extra value reads (ordinal keys are derived from address ranges).
+  counters.ValueAtCount |> shouldEqual 25
+
+[<Test>]
+let ``Can fill missing float-batch cells with a caller-supplied value`` () =
+  let len = 6L
+  let counters = AccessCounters()
+  let srcA =
+    InstrumentedOrdinalSource<float>(len, (fun i -> float i), counters, hasMissing=true, addrMap=id)
+    :> IVirtualVectorSource
+  let frame = Virtual.CreateOrdinalFrame(["A"], [ srcA ])
+
+  let (batch : FloatBatch<int64>) =
+    Virtual.MaterializeFloatBatches(frame, len, ["A"], missingPolicy=FloatMissingPolicy.Value(-1.0))
+    |> Seq.head
+  let f = batch.Features
+
+  f.[0].[0] |> shouldEqual -1.0
+  f.[1].[0] |> shouldEqual 1.0
+  f.[3].[0] |> shouldEqual -1.0
+
+[<Test>]
+let ``Can throw when float-batch size is not positive`` () =
+  let _, src = InstrumentedOrdinalSource.createFloats 4L
+  let frame = Virtual.CreateOrdinalFrame(["A"], [ src :> IVirtualVectorSource ])
+  (fun () -> Virtual.MaterializeFloatBatches(frame, 0L, ["A"]) |> ignore)
+  |> should throw typeof<System.ArgumentException>
 
 // TODO:
 //  let idx, s1, s2, f = createSimpleTimeFrame()
