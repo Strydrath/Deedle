@@ -6,7 +6,7 @@
 
 - **`Virtual.ReadCsv`**: load a CSV file as a virtual `Frame` with an ordered index column (auto-detects `Timestamp` / `DateTime` when present). Empty / `NA`-style cells become missing values; quoted fields with commas are supported.
 - **`VirtualLookupRange` helpers**: `forRepeatingCycle`, `forCategorical`, `forCategoricalScan`, and `scan` for configuring searchable string columns on virtual sources. Unknown cycle values yield an empty filter range (no throw).
-- **CSV virtual backend** (`Deedle.Virtual.Sources`): `CsvLineIndex`, `VirtualCsvSource`, and `CsvTestData` helpers for file-backed Big Deedle experiments.
+- **CSV virtual backend** (`Deedle.Virtual.Sources`): `CsvLineIndex`, `VirtualCsvSource` for file-backed Big Deedle experiments. Fixture helpers live in `tests/Common/CsvTestData.fs` (not shipped in the library).
 - **`Frame.filterRowsBy2`**: intersect two column predicates in one virtual `LookupRange` / `GetSubVector` pass (falls back to sequential `filterRowsBy` on linear frames).
 - **`Virtual.MaterializeFloatBatches`** (B16): lazily materialize selected float columns into per-batch `float[][]` feature matrices from a virtual frame. Missing cells map to `NaN` by default, or a caller-supplied `FloatMissingPolicy.Value`.
 - **`Virtual.ReadCsvDirectory`** (B16): load a folder of same-schema CSVs as one ordinal virtual frame (`OrdinalVirtualSource` concat).
@@ -31,6 +31,8 @@
 ### Bug fixes
 - **Chained virtual `filterRowsBy` on Step columns:** after a Step `GetSubVector`, `LookupRange` is remapped into the sliced address domain (same-value chain keeps the row count; disjoint Step values yield empty). Custom/IndexList sub-vectors remap the same way.
 - **Virtual wrappers (B10):** boxed / combined / mapped / row-reader sources no longer `failwith` on `LookupRange` / `LookupValue` — they delegate or scan. Partitioned `Ranges` sources accept custom LookupRange results. `Series.fillMissing` / `fillMissingWith` stay virtual. `VirtualVectorBuilder.AsyncBuild` with a virtual scheme raises `NotSupportedException` (use `Series.Materialize` / `AsyncMaterialize`).
+- **`OrdinalVirtualSource`:** mismatched `MergeWith` and `LookupValue` without `asLong` raise `InvalidOperationException` (via `invalidOp`) instead of `failwith`.
+- **`VirtualCsvSource`:** missing files/directories raise `FileNotFoundException` / `DirectoryNotFoundException`; unknown columns and schema mismatches use `invalidArg` / `invalidOp` instead of `failwith`.
 
 ## 8.0.0 - 2026-05-09
 

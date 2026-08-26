@@ -22,6 +22,7 @@ open Deedle.Vectors
 open Deedle.Virtual
 open Deedle.Virtual.Sources
 open Deedle.Vectors.Virtual
+open Deedle.TestData
 open Deedle.Tests.VirtualInstrumentation
 
 // ------------------------------------------------------------------------------------------------
@@ -87,12 +88,12 @@ let ``Can read virtual fixtures CSV with quoted fields and missing cells`` () =
   VirtualFrameDiagnostics.GetRowIndexKind frame |> shouldEqual VirtualRowIndexKind.OrderedVirtual
 
 [<Test>]
-let ``ReadCsv throws when file is missing`` () =
+let ``Can throw when ReadCsv file is missing`` () =
   (fun () -> Virtual.ReadCsv(Path.Combine(Path.GetTempPath(), "deedle-csv-missing.csv")) |> ignore)
-  |> should throw typeof<System.Exception>
+  |> should throw typeof<FileNotFoundException>
 
 [<Test>]
-let ``ReadCsv throws when CSV has no data rows`` () =
+let ``Can throw when ReadCsv has no data rows`` () =
   let path = Path.Combine(Path.GetTempPath(), "deedle-csv-empty.csv")
   File.WriteAllText(path, "Timestamp,Id\r\n")
   try
@@ -399,17 +400,17 @@ let ``Can filter file-backed CSV faster than materialized full scan`` () =
   virtualMs |> should be (lessThan materializedMs)
 
 [<Test>]
-let ``ReadCsv throws when column name is unknown`` () =
+let ``Can throw when ReadCsv column name is unknown`` () =
   let path = Path.Combine(Path.GetTempPath(), "deedle-csv-unknown-col.csv")
   CsvTestData.ensureSearchCsv path 10L |> ignore
   try
     (fun () -> Virtual.ReadCsv(path, indexColumn = "Timestamp", columnKeys = [ "NotAColumn" ]) |> ignore)
-    |> should throw typeof<System.Exception>
+    |> should throw typeof<ArgumentException>
   finally
     if File.Exists path then File.Delete path
 
 [<Test>]
-let ``ReadCsv throws when index column cell is invalid`` () =
+let ``Can throw when ReadCsv index column cell is invalid`` () =
   let path = Path.Combine(Path.GetTempPath(), "deedle-csv-bad-index.csv")
   File.WriteAllText(
     path,

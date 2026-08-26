@@ -7,6 +7,7 @@ open Deedle
 open Deedle.Virtual
 open Deedle.Vectors.Virtual
 open Deedle.Virtual.Sources
+open Deedle.TestData
 open Deedle.Parquet
 open Deedle.Parquet.Virtual.Sources
 open Parquet.Schema

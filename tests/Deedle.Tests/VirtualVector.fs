@@ -27,6 +27,15 @@ let private customCount (range: RangeRestriction<Address>) =
   | RangeRestriction.Fixed(lo, hi) -> int (Address.asInt64 hi - Address.asInt64 lo + 1L)
   | RangeRestriction.Start n | RangeRestriction.End n -> int n
 
+let private customAddrs (range: RangeRestriction<Address>) =
+  match range with
+  | RangeRestriction.Custom ar -> ar |> Seq.map Address.asInt64 |> Seq.toList
+  | RangeRestriction.Fixed(lo, hi) -> [ Address.asInt64 lo .. Address.asInt64 hi ]
+  | RangeRestriction.Start n -> [ 0L .. n - 1L ]
+  | RangeRestriction.End n -> failwith "End restriction not used in these tests"
+
+let private always = Func<Address, bool>(fun _ -> true)
+
 // ------------------------------------------------------------------------------------------------
 // VirtualVectorSource wrappers (src/Deedle/Vectors/VirtualVector.fs)
 // ------------------------------------------------------------------------------------------------
@@ -46,12 +55,70 @@ let ``Can delegate LookupRange through boxed virtual source`` () =
   c.Snapshot().LookupRangeCount |> shouldEqual 1
 
 [<Test>]
+let ``Can scan LookupRange on boxed source when search is not the inner type`` () =
+  let words = [| "lorem"; "ipsum"; "dolor" |]
+  let c, src = InstrumentedOrdinalSource.createSearchableStrings 12L words
+  c.Reset()
+  let range = VirtualVectorSource.boxSource(src).LookupRange(box 42)
+  customCount range |> shouldEqual 0
+  c.Snapshot().LookupRangeCount |> shouldEqual 0
+  c.Snapshot().ValueAtCount |> should be (greaterThan 0)
+
+[<Test>]
+let ``Can LookupValue Exact through boxed virtual source`` () =
+  let _, src = InstrumentedOrdinalSource.createLongs 9L
+  let boxed = VirtualVectorSource.boxSource(src)
+  let hit = boxed.LookupValue(box 1L, Lookup.Exact, always)
+  hit.HasValue |> shouldEqual true
+  hit.Value |> fst |> shouldEqual (box 1L)
+  Address.asInt64 (snd hit.Value) |> shouldEqual 1L
+  boxed.LookupValue(box 99L, Lookup.Exact, always).HasValue |> shouldEqual false
+
+[<Test>]
 let ``Can scan LookupRange on mapped virtual source without reverse mapping`` () =
   let c, src = InstrumentedOrdinalSource.createFloats 16L
   let mapped = VirtualVectorSource.map None (fun _ ov -> OptionalValue.map (fun v -> v + 1.0) ov) src
   c.Reset()
-  customCount (mapped.LookupRange(3.0)) |> shouldEqual 1
+  let range = mapped.LookupRange(3.0)
+  customCount range |> shouldEqual 1
+  customAddrs range |> shouldEqual [ 2L ]
   c.Snapshot().ValueAtCount |> should be (greaterThanOrEqualTo 1)
+
+[<Test>]
+let ``Can LookupValue Exact on mapped source without reverse mapping`` () =
+  let _, src = InstrumentedOrdinalSource.createFloats 16L
+  let mapped = VirtualVectorSource.map None (fun _ ov -> OptionalValue.map (fun v -> v + 1.0) ov) src
+  let hit = mapped.LookupValue(3.0, Lookup.Exact, always)
+  hit.HasValue |> shouldEqual true
+  hit.Value |> fst |> shouldEqual 3.0
+  Address.asInt64 (snd hit.Value) |> shouldEqual 2L
+  mapped.LookupValue(99.0, Lookup.Exact, always).HasValue |> shouldEqual false
+
+[<Test>]
+let ``Can delegate LookupRange through mapped source with reverse mapping`` () =
+  let words = [| "a"; "b"; "c" |]
+  let c, src = InstrumentedOrdinalSource.createStrings 12L words
+  let mapped =
+    VirtualVectorSource.map
+      (Some(fun (s: string) -> s.ToLowerInvariant()))
+      (fun _ ov -> OptionalValue.map (fun (s: string) -> s.ToUpperInvariant()) ov)
+      src
+  c.Reset()
+  // ExactFixed on inner: reverse maps "B" -> "b" then Fixed(1,1) — no ValueAt scan.
+  customAddrs (mapped.LookupRange("B")) |> shouldEqual [ 1L ]
+  c.Snapshot().LookupRangeCount |> shouldEqual 1
+  c.Snapshot().ValueAtCount |> shouldEqual 0
+
+[<Test>]
+let ``Non-exact LookupValue on wrapper raises NotSupportedException`` () =
+  let _, src = InstrumentedOrdinalSource.createFloats 8L
+  let mapped = VirtualVectorSource.map None (fun _ ov -> ov) src
+  (fun () -> mapped.LookupValue(1.0, Lookup.Greater, always) |> ignore)
+  |> should throw typeof<NotSupportedException>
+  // Wrong CLR type on boxed → scan path (not inner LookupValue).
+  let boxed = VirtualVectorSource.boxSource(src)
+  (fun () -> boxed.LookupValue(box "nope", Lookup.ExactOrGreater, always) |> ignore)
+  |> should throw typeof<NotSupportedException>
 
 [<Test>]
 let ``Can scan combined virtual source LookupRange instead of throwing`` () =
@@ -63,7 +130,23 @@ let ``Can scan combined virtual source LookupRange instead of throwing`` () =
         | [a; b] when a.HasValue && b.HasValue -> OptionalValue(a.Value + b.Value)
         | _ -> OptionalValue.Missing)
       [ s1 :> IVirtualVectorSource<_>; s2 :> IVirtualVectorSource<_> ]
-  customCount (combined.LookupRange(5.0)) |> shouldEqual 1
+  let range = combined.LookupRange(5.0)
+  customCount range |> shouldEqual 1
+  customAddrs range |> shouldEqual [ 2L ]
+
+[<Test>]
+let ``Can LookupValue Exact on combined virtual source`` () =
+  let _, s1 = InstrumentedOrdinalSource.createFloats 8L
+  let s2 = InstrumentedOrdinalSource<float>(8L, (fun i -> float (i + 1L)), AccessCounters())
+  let combined =
+    VirtualVectorSource.combine
+      (function
+        | [a; b] when a.HasValue && b.HasValue -> OptionalValue(a.Value + b.Value)
+        | _ -> OptionalValue.Missing)
+      [ s1 :> IVirtualVectorSource<_>; s2 :> IVirtualVectorSource<_> ]
+  let hit = combined.LookupValue(5.0, Lookup.Exact, always)
+  hit.HasValue |> shouldEqual true
+  Address.asInt64 (snd hit.Value) |> shouldEqual 2L
 
 [<Test>]
 let ``Row reader virtual source LookupRange does not throw`` () =
@@ -80,6 +163,34 @@ let ``Row reader virtual source LookupRange does not throw`` () =
   customCount (reader.LookupRange(Unchecked.defaultof<_>)) |> shouldEqual 0
 
 [<Test>]
+let ``MergeWith on boxed source rejects non-boxed peers`` () =
+  let _, src = InstrumentedOrdinalSource.createFloats 4L
+  let boxed = VirtualVectorSource.boxSource(src)
+  let peer = OrdinalVirtualSource(4L, (fun i -> OptionalValue(box i)), "peer") :> IVirtualVectorSource<obj>
+  (fun () -> boxed.MergeWith([ peer ]) |> ignore)
+  |> should throw typeof<InvalidOperationException>
+
+[<Test>]
+let ``MergeWith on mapped source rejects non-mapped peers`` () =
+  let _, src = InstrumentedOrdinalSource.createFloats 4L
+  let mapped = VirtualVectorSource.map None (fun _ ov -> ov) src
+  (fun () -> mapped.MergeWith([ src :> IVirtualVectorSource<_> ]) |> ignore)
+  |> should throw typeof<InvalidOperationException>
+
+[<Test>]
+let ``MergeWith on combined source rejects non-combined peers`` () =
+  let _, s1 = InstrumentedOrdinalSource.createFloats 4L
+  let s2 = InstrumentedOrdinalSource<float>(4L, float, AccessCounters())
+  let combined =
+    VirtualVectorSource.combine
+      (function
+        | [a; b] when a.HasValue && b.HasValue -> OptionalValue(a.Value + b.Value)
+        | _ -> OptionalValue.Missing)
+      [ s1 :> IVirtualVectorSource<_>; s2 :> IVirtualVectorSource<_> ]
+  (fun () -> combined.MergeWith([ s1 :> IVirtualVectorSource<_> ]) |> ignore)
+  |> should throw typeof<InvalidOperationException>
+
+[<Test>]
 let ``AsyncBuild on virtual scheme raises NotSupportedException`` () =
   let _, s = InstrumentedOrdinalSource.createOrdinalSeries 8L
   let ex =
@@ -89,3 +200,58 @@ let ``AsyncBuild on virtual scheme raises NotSupportedException`` () =
       |> Async.RunSynchronously
       |> ignore)
   ex.Message.Contains("Materialize") |> shouldEqual true
+
+// ------------------------------------------------------------------------------------------------
+// withLinearAddressing / fillMissing
+// ------------------------------------------------------------------------------------------------
+
+[<Test>]
+let ``withLinearAddressing is a no-op on already linear ordinal source`` () =
+  let src = OrdinalVirtualSource(5L, (fun i -> OptionalValue i), "test") :> IVirtualVectorSource<_>
+  let wrapped = VirtualVectorSource.withLinearAddressing src
+  Object.ReferenceEquals(src, wrapped) |> shouldEqual true
+
+[<Test>]
+let ``withLinearAddressing is idempotent on ILinearAddressedSource`` () =
+  let src = OrdinalVirtualSource(5L, (fun i -> OptionalValue i), "test") :> IVirtualVectorSource<_>
+  // Force a wrap by building through GetSubVector + builder path: double-wrap the marker.
+  let once =
+    match VirtualVectorSource.withLinearAddressing src with
+    | s -> s
+  let twice = VirtualVectorSource.withLinearAddressing once
+  Object.ReferenceEquals(once, twice) |> shouldEqual true
+
+[<Test>]
+let ``fillMissing constant NaN on float source is a no-op`` () =
+  let _, src = InstrumentedOrdinalSource.createFloats 8L
+  let filled =
+    VirtualVectorSource.fillMissing (VectorFillMissing.Constant (box Double.NaN)) (src :> IVirtualVectorSource<_>)
+  Object.ReferenceEquals(src :> obj, filled :> obj) |> shouldEqual true
+
+[<Test>]
+let ``fillMissing constant with incompatible type leaves source unchanged`` () =
+  let _, src = InstrumentedOrdinalSource.createFloats 8L
+  let filled =
+    VirtualVectorSource.fillMissing (VectorFillMissing.Constant (box "nope")) (src :> IVirtualVectorSource<_>)
+  Object.ReferenceEquals(src :> obj, filled :> obj) |> shouldEqual true
+
+[<Test>]
+let ``fillMissing constant replaces missing cells and stays virtual`` () =
+  let c = AccessCounters()
+  let src = InstrumentedOrdinalSource<float>(9L, float, c, hasMissing=true)
+  let s = Virtual.CreateOrdinalSeries(src)
+  let filled = s |> Series.fillMissingWith -1.0
+  SeriesProbe.isVirtual filled |> shouldEqual true
+  filled.TryGet(0L) |> shouldEqual (OptionalValue -1.0)
+  filled.TryGet(1L) |> shouldEqual (OptionalValue 1.0)
+
+[<Test>]
+let ``fillMissing Backward walks to the next present value`` () =
+  let c = AccessCounters()
+  let src = InstrumentedOrdinalSource<float>(9L, float, c, hasMissing=true)
+  let s = Virtual.CreateOrdinalSeries(src)
+  let filled = s |> Series.fillMissing Direction.Backward
+  SeriesProbe.isVirtual filled |> shouldEqual true
+  // Index 0 is missing (0 % 3 = 0); Backward walks forward to 1.
+  filled.TryGet(0L) |> shouldEqual (OptionalValue 1.0)
+  filled.TryGet(3L) |> shouldEqual (OptionalValue 4.0)

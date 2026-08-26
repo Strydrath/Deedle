@@ -1,4 +1,4 @@
-﻿namespace Deedle.Vectors.Virtual
+namespace Deedle.Vectors.Virtual
 
 // ------------------------------------------------------------------------------------------------
 // Virtual vector - implements a virtualized data storage for Deedle (together with
@@ -14,10 +14,6 @@ open Deedle.Vectors
 open Deedle.VectorHelpers
 open Deedle.Internal
 open System.Runtime.CompilerServices
-
-module private LinAddr =
-  let inline asInt64 x = LinearAddress.asInt64 x
-  let inline ofInt64 x = LinearAddress.ofInt64 x
 
 
 /// A helper type used by non-generic `IVirtualVectorSource` to invoke generic
@@ -178,14 +174,14 @@ module VirtualVectorSource =
       | :? ContiguousLinearAddressOperations as o -> o.Length = length
       | _ -> false
     interface IAddressOperations with
-      member _.FirstElement = LinAddr.ofInt64 0L
-      member _.LastElement = LinAddr.ofInt64 hi
-      member _.AddressOf(offset) = LinAddr.ofInt64 offset
-      member _.OffsetOf(addr) = LinAddr.asInt64 addr
-      member _.AdjustBy(addr, offset) = LinAddr.ofInt64 (LinAddr.asInt64 addr + offset)
+      member _.FirstElement = LinearAddress.ofInt64 0L
+      member _.LastElement = LinearAddress.ofInt64 hi
+      member _.AddressOf(offset) = LinearAddress.ofInt64 offset
+      member _.OffsetOf(addr) = LinearAddress.asInt64 addr
+      member _.AdjustBy(addr, offset) = LinearAddress.ofInt64 (LinearAddress.asInt64 addr + offset)
       member _.Range =
         if length <= 0L then Seq.empty
-        else seq { for i in 0L .. hi -> LinAddr.ofInt64 i }
+        else seq { for i in 0L .. hi -> LinearAddress.ofInt64 i }
 
   let private nonExactLookupMessage =
     "Non-exact LookupValue is not supported on this virtual wrapper. " +
@@ -241,17 +237,17 @@ module VirtualVectorSource =
       | :? ILinearAddressedSource<'T> -> true
       | _ when length = 0L -> true
       | _ ->
-          ops.FirstElement = LinAddr.ofInt64 0L &&
-          ops.LastElement = LinAddr.ofInt64 (length - 1L) &&
-          ops.AddressOf(0L) = LinAddr.ofInt64 0L
+          ops.FirstElement = LinearAddress.ofInt64 0L &&
+          ops.LastElement = LinearAddress.ofInt64 (length - 1L) &&
+          ops.AddressOf(0L) = LinearAddress.ofInt64 0L
     if alreadyLinear then source
     else
-      let toUnderlying addr = ops.AddressOf(LinAddr.asInt64 addr)
-      let toLinear addr = LinAddr.ofInt64 (ops.OffsetOf(addr))
+      let toUnderlying addr = ops.AddressOf(LinearAddress.asInt64 addr)
+      let toLinear addr = LinearAddress.ofInt64 (ops.OffsetOf(addr))
       let addressing = ContiguousLinearAddressOperations(length) :> IAddressOperations
       { new IVirtualVectorSource<'T> with
           member _.ValueAt(loc) =
-            let i = LinAddr.asInt64 loc.Address
+            let i = LinearAddress.asInt64 loc.Address
             source.ValueAt(KnownLocation(toUnderlying loc.Address, i))
           member _.LookupRange(search) =
             source.LookupRange(search) |> RangeRestriction.map toLinear
@@ -575,7 +571,7 @@ type VirtualVectorBuilder() =
       // Public Series.AsyncMaterialize / Materialize first turn the index linear,
       // so this path receives LinearAddressingScheme and delegates to ArrayVector.
       // There is no async protocol on IVirtualVectorSource, so a virtual scheme
-      // cannot be built asynchronously — call Series.Materialize() instead.
+      // cannot be built asynchronously � call Series.Materialize() instead.
       if scheme = LinearAddressingScheme.Instance then
         baseBuilder.AsyncBuild<'T>(scheme, cmd, args)
       else
