@@ -80,7 +80,7 @@ module internal CsvParsing =
 
   let field (fields: string[]) (columnIndex: int) =
     if columnIndex >= fields.Length then
-      failwithf "VirtualCsvSource: column %d missing (fields=%d)" columnIndex fields.Length
+      invalidOp (sprintf "VirtualCsvSource: column %d missing (fields=%d)" columnIndex fields.Length)
     fields.[columnIndex].TrimEnd('\r', '\n')
 
   let isMissingCell (s: string) =
@@ -109,7 +109,7 @@ module internal CsvParsing =
   let columnIndex (header: string[]) (name: string) =
     match header |> Array.tryFindIndex (fun h -> String.Equals(h, name, StringComparison.OrdinalIgnoreCase)) with
     | Some idx -> idx
-    | None -> failwithf "VirtualCsvSource: column '%s' not found in header" name
+    | None -> invalidArg "name" (sprintf "VirtualCsvSource: column '%s' not found in header" name)
 
 /// Shared row index for one CSV file (built once, reused by column sources).
 /// Default backend caches physical line text. [`byteOffset`] stores only start offsets and seeks on read.
@@ -176,12 +176,13 @@ module VirtualCsvSource =
         [ for row in 0 .. sampleCount - 1 ->
             field (index.ReadFields(int64 row)) columnIndex ]
         |> List.filter (not << isMissingCell)
-      if samples.IsEmpty then "string"
+      match samples with
+      | [] -> "string"
       // Prefer numerics over DateTimeOffset.TryParse, which accepts bare integers like "1".
-      elif List.forall (tryParseInt64 >> Option.isSome) samples then "int64"
-      elif List.forall (tryParseFloat >> Option.isSome) samples then "float"
-      elif List.forall (fun s -> Option.isSome (tryParseDateTime s) && looksLikeDateTime s) samples then "datetime"
-      else "string"
+      | _ when List.forall (tryParseInt64 >> Option.isSome) samples -> "int64"
+      | _ when List.forall (tryParseFloat >> Option.isSome) samples -> "float"
+      | _ when List.forall (fun s -> Option.isSome (tryParseDateTime s) && looksLikeDateTime s) samples -> "datetime"
+      | _ -> "string"
 
   let private createOptionalColumn (lineIndex: CsvLineIndex) columnIndex (tryParse: string -> 'T option)
       (asLong: ('T -> int64) option) (lookupRange: LookupRangeMode<'T> option) =
@@ -240,7 +241,7 @@ module VirtualCsvSource =
 
   /// Build a virtual frame from an indexed CSV file.
   let createFrame (csvPath: string) (options: VirtualReadCsvOptions) =
-    if not (File.Exists csvPath) then failwithf "VirtualCsvSource: file not found '%s'" csvPath
+    if not (File.Exists csvPath) then raise (FileNotFoundException(sprintf "VirtualCsvSource: file not found '%s'" csvPath, csvPath))
     let lineIndex = CsvLineIndex(csvPath, byteOffset=options.ByteOffsetIndex)
     if lineIndex.Length = 0L then invalidArg "csvPath" "CSV has no data rows"
     let header = lineIndex.HeaderColumns
@@ -296,14 +297,14 @@ module VirtualCsvSource =
     if csvPaths.Length = 0 then invalidArg "csvPaths" "At least one CSV file is required"
     let indexes =
       csvPaths |> Array.map (fun p ->
-        if not (File.Exists p) then failwithf "VirtualCsvSource: file not found '%s'" p
+        if not (File.Exists p) then raise (FileNotFoundException(sprintf "VirtualCsvSource: file not found '%s'" p, p))
         CsvLineIndex(p, byteOffset=options.ByteOffsetIndex))
     if indexes |> Array.exists (fun i -> i.Length = 0L) then invalidArg "csvPaths" "CSV part has no data rows"
     let header = indexes.[0].HeaderColumns
     if header.Length = 0 then invalidArg "csvPaths" "CSV has no header row"
     for i in 1 .. indexes.Length - 1 do
       if indexes.[i].HeaderColumns <> header then
-        failwithf "VirtualCsvSource: schema mismatch in '%s'" csvPaths.[i]
+        invalidArg "csvPaths" (sprintf "VirtualCsvSource: schema mismatch in '%s'" csvPaths.[i])
     let partSizes = indexes |> Array.map (fun i -> int i.Length)
     let total = partSizes |> Array.sumBy int64
     let keys =
@@ -331,114 +332,6 @@ module VirtualCsvSource =
       | _ -> sourceOf (fun s -> Some s) None lookup
     Virtual.CreateOrdinalFrame(keys, keys |> List.map makeColumn)
 
-/// Test-data helpers (also used by benchmarks). Not required for reading arbitrary CSVs.
-module CsvTestData =
-  let words8 =
-    "lorem ipsum dolor sit amet consectetur adipiscing elit".Split(' ')
-
-  let defaultDatasetName = "b6-search-100k-random.csv"
-  let defaultSeed = 42
-  let profileVersion = "random-v1"
-
-  type CsvDatasetMeta =
-    { Version: string
-      Seed: int
-      RowCount: int64
-      ValueSum: float }
-
-  let metaPath (csvPath: string) = csvPath + ".meta"
-
-  let private writeMeta (csvPath: string) (meta: CsvDatasetMeta) =
-    use writer = new StreamWriter(metaPath csvPath, false)
-    writer.WriteLine(sprintf "version=%s" meta.Version)
-    writer.WriteLine(sprintf "seed=%d" meta.Seed)
-    writer.WriteLine(sprintf "rows=%d" meta.RowCount)
-    writer.WriteLine(sprintf "valueSum=%s" (meta.ValueSum.ToString("R", CultureInfo.InvariantCulture)))
-
-  let readMeta (csvPath: string) =
-    let lines = File.ReadAllLines(metaPath csvPath)
-    let lookup key =
-      lines
-      |> Array.tryFind (fun line -> line.StartsWith(key + "=", StringComparison.Ordinal))
-      |> Option.map (fun line -> line.Substring(key.Length + 1))
-      |> Option.defaultWith (fun () -> failwithf "CsvTestData meta missing key '%s'" key)
-    { Version = lookup "version"
-      Seed = Int32.Parse(lookup "seed", CultureInfo.InvariantCulture)
-      RowCount = Int64.Parse(lookup "rows", CultureInfo.InvariantCulture)
-      ValueSum = Double.Parse(lookup "valueSum", CultureInfo.InvariantCulture) }
-
-  let private shuffleInPlace (rng: Random) (items: int[]) =
-    for i in items.Length - 1 .. -1 .. 0 do
-      let j = rng.Next(i + 1)
-      let tmp = items.[i]
-      items.[i] <- items.[j]
-      items.[j] <- tmp
-
-  let generateSearchCsv (path: string) (rowCount: int64) (seed: int) =
-    let dir = Path.GetDirectoryName(path)
-    if not (String.IsNullOrEmpty dir) && not (Directory.Exists dir) then
-      Directory.CreateDirectory dir |> ignore
-    let rng = Random(seed)
-    let ids = Array.init (int rowCount) id
-    shuffleInPlace rng ids
-    let mutable valueSum = 0.0
-    use writer = new StreamWriter(path, false)
-    writer.WriteLine("Id,Timestamp,Category,Value")
-    let start = DateTimeOffset(DateTime(2000, 1, 1), TimeSpan.Zero)
-    for i in 0L .. rowCount - 1L do
-      let id = ids.[int i]
-      let cat = words8.[int (i % int64 words8.Length)]
-      let ts = start.AddSeconds(float i).ToString("o", CultureInfo.InvariantCulture)
-      let value = rng.NextDouble() * 10000.0
-      let valueStr = value.ToString("F4", CultureInfo.InvariantCulture)
-      valueSum <- valueSum + Double.Parse(valueStr, CultureInfo.InvariantCulture)
-      writer.WriteLine(sprintf "%d,%s,%s,%s" id ts cat valueStr)
-    writeMeta path
-      { Version = profileVersion
-        Seed = seed
-        RowCount = rowCount
-        ValueSum = valueSum }
-    path
-
-  let ensureSearchCsvWithSeed (path: string) (rowCount: int64) (seed: int) =
-    let valid =
-      File.Exists path &&
-      File.Exists (metaPath path) &&
-      try
-        let meta = readMeta path
-        meta.Version = profileVersion &&
-        meta.Seed = seed &&
-        meta.RowCount = rowCount &&
-        let idx = CsvLineIndex(path)
-        idx.Length = rowCount && idx.ReadFields(0L).Length >= 4
-      with _ -> false
-    if valid then path
-    else
-      if File.Exists path then File.Delete path
-      let metaFile = metaPath path
-      if File.Exists metaFile then File.Delete metaFile
-      generateSearchCsv path rowCount seed
-
-  let ensureSearchCsv (path: string) (rowCount: int64) =
-    ensureSearchCsvWithSeed path rowCount defaultSeed
-
-  /// Search-dataset frame: Timestamp index, Id + searchable Category (8-word cycle Step LookupRange).
-  let createSearchDatasetFrame (csvPath: string) =
-    let options =
-      { VirtualReadCsvOptions.Default with
-          IndexColumn = Some "Timestamp"
-          SearchColumn =
-            Some("Category", VirtualLookupRange.forRepeatingCycle words8)
-          ColumnKeys = Some [ "Id"; "Category" ] }
-    VirtualCsvSource.createFrame csvPath options, words8
-
-  let createFloatValueSeries (csvPath: string) =
-    let lineIndex = CsvLineIndex(csvPath)
-    let src =
-      VirtualCsvSource.createColumnSource lineIndex "Value" None
-      :?> IVirtualVectorSource<float>
-    Virtual.CreateOrdinalSeries(src)
-
 namespace Deedle.Virtual
 
 open System.IO
@@ -446,21 +339,21 @@ open Deedle.Virtual.Sources
 
 [<AutoOpen>]
 module VirtualCsvExtensions =
+  let private searchColumnOption searchColumn searchLookupRange =
+    match searchColumn with
+    | None -> None
+    | Some name ->
+        match searchLookupRange with
+        | Some mode -> Some(name, mode)
+        | None -> Some(name, LookupRangeUnsupported)
+
   type Virtual with
     /// Load a CSV file as a virtual frame with an ordered row index.
     /// The index column defaults to `Timestamp` / `DateTime` / first date-like column when not specified.
     static member ReadCsv(path: string, ?indexColumn: string, ?searchColumn: string, ?searchLookupRange: LookupRangeMode<string>, ?columnKeys: string list, ?byteOffsetIndex: bool) =
-      let searchCol =
-        match searchColumn with
-        | None -> None
-        | Some name ->
-            match searchLookupRange with
-            | Some mode -> Some(name, mode)
-            | None ->
-                Some(name, LookupRangeUnsupported)
       let options : VirtualReadCsvOptions =
         { IndexColumn = indexColumn
-          SearchColumn = searchCol
+          SearchColumn = searchColumnOption searchColumn searchLookupRange
           ColumnKeys = columnKeys
           ByteOffsetIndex = defaultArg byteOffsetIndex false }
       VirtualCsvSource.createFrame path options
@@ -474,20 +367,14 @@ module VirtualCsvExtensions =
           ?searchLookupRange: LookupRangeMode<string>,
           ?columnKeys: string list,
           ?byteOffsetIndex: bool ) =
-      if not (Directory.Exists directory) then failwithf "VirtualCsvSource: directory not found '%s'" directory
+      if not (Directory.Exists directory) then
+        raise (DirectoryNotFoundException(sprintf "VirtualCsvSource: directory not found '%s'" directory))
       let pattern = defaultArg searchPattern "*.csv"
       let files = Directory.GetFiles(directory, pattern) |> Array.sort
       if files.Length = 0 then invalidArg "directory" (sprintf "No files matching '%s' in '%s'" pattern directory)
-      let searchCol =
-        match searchColumn with
-        | None -> None
-        | Some name ->
-            match searchLookupRange with
-            | Some mode -> Some(name, mode)
-            | None -> Some(name, LookupRangeUnsupported)
       let options : VirtualReadCsvOptions =
         { IndexColumn = None
-          SearchColumn = searchCol
+          SearchColumn = searchColumnOption searchColumn searchLookupRange
           ColumnKeys = columnKeys
           ByteOffsetIndex = defaultArg byteOffsetIndex false }
       VirtualCsvSource.createConcatenatedFrame files options

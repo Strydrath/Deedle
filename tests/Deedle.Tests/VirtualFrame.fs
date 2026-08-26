@@ -228,7 +228,7 @@ let ``Can return missing for IndexUtils binary search on empty range`` () =
 // ------------------------------------------------------------------------------------------------
 
 [<Test>]
-let ``CreateOrdinalFrame throws when source lengths differ`` () =
+let ``Can throw when CreateOrdinalFrame source lengths differ`` () =
   let short = InstrumentedOrdinalSource.createLongs 10L |> snd
   let long = InstrumentedOrdinalSource.createLongs 20L |> snd
   (fun () ->
@@ -237,7 +237,7 @@ let ``CreateOrdinalFrame throws when source lengths differ`` () =
   |> should throw typeof<System.ArgumentException>
 
 [<Test>]
-let ``CreateOrdinalFrame throws when no columns supplied`` () =
+let ``Can throw when CreateOrdinalFrame has no columns`` () =
   (fun () -> Virtual.CreateOrdinalFrame([], []) |> ignore)
   |> should throw typeof<System.ArgumentException>
 
@@ -296,11 +296,47 @@ let ``Can read ValueAt from OrdinalVirtualSource`` () =
   src.Length |> shouldEqual 3L
 
 [<Test>]
-let ``OrdinalVirtualSource MergeWith throws on mismatched source types`` () =
+let ``Can throw when OrdinalVirtualSource MergeWith has mismatched source types`` () =
   let a = OrdinalVirtualSource(4L, (fun i -> OptionalValue(i)), "test") :> IVirtualVectorSource<int64>
   let mapped = VirtualVectorSource.map None (fun _ ov -> ov) a
   (fun () -> a.MergeWith([mapped]) |> ignore)
-  |> should throw typeof<System.Exception>
+  |> should throw typeof<InvalidOperationException>
+
+[<Test>]
+let ``Can MergeWith two OrdinalVirtualSources and LookupValue Exact`` () =
+  let a = OrdinalVirtualSource(3L, (fun i -> OptionalValue(i)), "test", asLong=id)
+  let b = OrdinalVirtualSource(2L, (fun i -> OptionalValue(i + 100L)), "test", asLong=id)
+  let merged = (a :> IVirtualVectorSource<_>).MergeWith([ b :> IVirtualVectorSource<_> ])
+  merged.Length |> shouldEqual 5L
+  merged.ValueAt(KnownLocation(Address.ofInt64 3L, 3L)) |> shouldEqual (OptionalValue 100L)
+  let hit = merged.LookupValue(100L, Lookup.Exact, fun _ -> true)
+  hit.HasValue |> shouldEqual true
+  Address.asInt64 (snd hit.Value) |> shouldEqual 3L
+
+[<Test>]
+let ``Can throw when OrdinalVirtualSource LookupValue has no asLong`` () =
+  let src = OrdinalVirtualSource(3L, (fun i -> OptionalValue(float i)), "test") :> IVirtualVectorSource<float>
+  (fun () -> src.LookupValue(1.0, Lookup.Exact, fun _ -> true) |> ignore)
+  |> should throw typeof<InvalidOperationException>
+
+[<Test>]
+let ``Can LookupRange and GetSubVector on OrdinalVirtualSource with Step mode`` () =
+  let words = [| "a"; "b"; "c" |]
+  let src =
+    OrdinalVirtualSource(
+      12L,
+      (fun i -> OptionalValue(words.[int (i % 3L)])),
+      "test",
+      lookupRange=VirtualLookupRange.forRepeatingCycle words)
+    :> IVirtualVectorSource<string>
+  match src.LookupRange("b") with
+  | RangeRestriction.Custom(:? Deedle.Virtual.StepRange as sr) ->
+      sr.Offset |> shouldEqual 1
+      sr.Step |> shouldEqual 3
+  | other -> failwithf "expected StepRange, got %A" other
+  let sub = src.GetSubVector(src.LookupRange("b"))
+  sub.Length |> shouldEqual 4L
+  sub.ValueAt(KnownLocation(Address.ofInt64 0L, 0L)) |> shouldEqual (OptionalValue "b")
 
 // ------------------------------------------------------------------------------------------------
 // Some trivial testing for TrackingSource
@@ -790,6 +826,33 @@ let ``Can throw when float-batch size is not positive`` () =
   let _, src = InstrumentedOrdinalSource.createFloats 4L
   let frame = Virtual.CreateOrdinalFrame(["A"], [ src :> IVirtualVectorSource ])
   (fun () -> Virtual.MaterializeFloatBatches(frame, 0L, ["A"]) |> ignore)
+  |> should throw typeof<System.ArgumentException>
+  (fun () -> Virtual.MaterializeFloatBatches(frame, -5L, ["A"]) |> ignore)
+  |> should throw typeof<System.ArgumentException>
+
+[<Test>]
+let ``Can throw when float-batch column key is unknown`` () =
+  let _, src = InstrumentedOrdinalSource.createFloats 4L
+  let frame = Virtual.CreateOrdinalFrame(["A"], [ src :> IVirtualVectorSource ])
+  (fun () ->
+    Virtual.MaterializeFloatBatches(frame, 2L, ["Missing"])
+    |> Seq.head
+    |> ignore)
+  |> should throw typeof<System.ArgumentException>
+
+[<Test>]
+let ``Can materialize float batches with empty column list`` () =
+  let _, src = InstrumentedOrdinalSource.createFloats 5L
+  let frame = Virtual.CreateOrdinalFrame(["A"], [ src :> IVirtualVectorSource ])
+  let batch = Virtual.MaterializeFloatBatches(frame, 5L, []) |> Seq.head
+  batch.Features.Length |> shouldEqual 5
+  batch.Features.[0].Length |> shouldEqual 0
+  batch.RowKeys |> shouldEqual None
+
+[<Test>]
+let ``Can throw when CreateOrdinalFrame has zero-length sources`` () =
+  let src = OrdinalVirtualSource(0L, (fun _ -> OptionalValue 0.0), "empty") :> IVirtualVectorSource
+  (fun () -> Virtual.CreateOrdinalFrame(["A"], [ src ]) |> ignore)
   |> should throw typeof<System.ArgumentException>
 
 // TODO:

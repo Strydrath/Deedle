@@ -136,8 +136,10 @@ type Virtual private () =
       | None -> Some(src.Length)
       | Some n when n = src.Length -> Some(n)
       | _ -> invalidArg "sources" "Sources should have the same length!" ) None
-    if count = None then invalidArg "sources" "At least one column is required"
-    let count = count.Value
+    let count =
+      match count with
+      | Some n -> n
+      | None -> invalidArg "sources" "At least one column is required"
     let source = sources |> Seq.head
     createFrame (VirtualOrdinalIndex(Ranges.inlineCreate (+) [0L, count-1L], source)) (Index.ofKeys (ReadOnlyCollection.ofSeq keys)) sources
 
@@ -189,11 +191,11 @@ type Virtual with
 
     let includeRowKeys = defaultArg includeRowKeys false
     let columnsArr = columns |> List.toArray
+    let total = frame.RowIndex.KeyCount
 
-    seq {
-      let total = frame.RowIndex.KeyCount
-      let mutable start = 0L
-      while start < total do
+    Seq.unfold (fun start ->
+      if start >= total then None
+      else
         let last = min (total - 1L) (start + batchSize - 1L)
         let loAddr = frame.RowIndex.AddressAt(start)
         let hiAddr = frame.RowIndex.AddressAt(last)
@@ -219,12 +221,12 @@ type Virtual with
             Array.init colCount (fun colIdx -> colArrays.[colIdx].[rowIdx]))
 
         let rowKeysOpt =
-          if includeRowKeys then Some (batchFrame.RowIndex.KeySequence |> Seq.toArray)
-          else None
+          match includeRowKeys with
+          | true -> Some (batchFrame.RowIndex.KeySequence |> Seq.toArray)
+          | false -> None
 
-        yield { Features = features; RowKeys = rowKeysOpt }
-        start <- last + 1L
-    }
+        Some({ Features = features; RowKeys = rowKeysOpt }, last + 1L)
+    ) 0L
 
 /// Ordinal pull-on-read virtual source with optional LookupRange semantics.
 type OrdinalVirtualSource<'T>
@@ -256,10 +258,10 @@ type OrdinalVirtualSource<'T>
         :: [ for s in sources ->
                match s with
                | :? OrdinalVirtualSource<'T> as src -> src.Length, src.RawValueAt
-               | _ -> failwith "MergeWith: expected OrdinalVirtualSource" ]
+               | _ -> invalidOp "MergeWith: expected OrdinalVirtualSource" ]
       let total = parts |> List.sumBy fst
       let rec valueAtMerged i = function
-        | [] -> failwithf "MergeWith: index %d out of range (len=%d)" i total
+        | [] -> invalidOp (sprintf "MergeWith: index %d out of range (len=%d)" i total)
         | (len, vat)::rest ->
             if i < len then vat i
             else valueAtMerged (i - len) rest
@@ -273,7 +275,7 @@ type OrdinalVirtualSource<'T>
       let asLongFn =
         match asLong with
         | Some g -> g
-        | None -> failwith "LookupValue: asLong not configured"
+        | None -> invalidOp "LookupValue: asLong not configured"
       let longAt i =
         match valueAt i with
         | OptionalValue.Present v -> asLongFn v

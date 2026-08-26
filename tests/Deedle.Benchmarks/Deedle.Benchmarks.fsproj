@@ -9,6 +9,9 @@
     <Compile Include="../Common/FsUnit.fs">
       <Link>FsUnit.fs</Link>
     </Compile>
+    <Compile Include="../Common/CsvTestData.fs">
+      <Link>CsvTestData.fs</Link>
+    </Compile>
     <Compile Include="../Common/ParquetTestData.fs">
       <Link>ParquetTestData.fs</Link>
     </Compile>
