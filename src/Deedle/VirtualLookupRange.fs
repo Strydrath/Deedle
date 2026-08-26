@@ -187,6 +187,108 @@ module LookupRangeExecutor =
               let local = abs - lo
               if local >= 0L && local < newLen then Some local else None))
 
+  let private gcd (a: int) (b: int) =
+    let rec loop x y = if y = 0 then abs x else loop y (x % y)
+    loop a b
+
+  /// Remap LookupRange modes after a Step sub-vector (parent abs = offset + step * local).
+  /// Without this, a second `filterRowsBy` reuses the original stride on `0 .. newLen-1`.
+  let private remapLookupRangeAfterStep (mode: LookupRangeMode<'T>) (parentOffset: int) (parentStep: int) (newLen: int64) =
+    let mapAbsToLocal (abs: int64) =
+      if parentStep <= 0 then None
+      elif abs < int64 parentOffset then None
+      elif (abs - int64 parentOffset) % int64 parentStep <> 0L then None
+      else
+        let local = (abs - int64 parentOffset) / int64 parentStep
+        if local >= 0L && local < newLen then Some local else None
+
+    match mode with
+    | LookupRangeUnsupported -> LookupRangeUnsupported
+    | LookupRangeFullFixed -> LookupRangeFullFixed
+    | LookupRangeIndexList f ->
+        LookupRangeIndexList (fun v -> f v |> List.choose mapAbsToLocal)
+    | LookupRangeExactFixed f ->
+        LookupRangeExactFixed (fun v ->
+          let a, b = f v
+          if parentStep <= 0 || newLen <= 0L || a > b then (0L, -1L)
+          else
+            let po, ps = int64 parentOffset, int64 parentStep
+            let firstAbs =
+              if a <= po then
+                if po > b then None else Some po
+              else
+                let r = (a - po) % ps
+                let cand = if r = 0L then a else a + (ps - r)
+                if cand > b then None else Some cand
+            match firstAbs with
+            | None -> (0L, -1L)
+            | Some fa ->
+                let r = (b - po) % ps
+                let la = if r = 0L then b else b - r
+                if la < fa then (0L, -1L)
+                else
+                  let lo = (fa - po) / ps
+                  let hi = (la - po) / ps
+                  (max 0L lo, min (newLen - 1L) hi))
+    | LookupRangeStep f ->
+        LookupRangeStep (fun v ->
+          let ao, so = f v
+          if ao < 0 || so <= 0 || parentStep <= 0 || newLen <= 0L then (-1, 1)
+          else
+            let g = gcd parentStep so
+            if (ao - parentOffset) % g <> 0 then (-1, 1)
+            else
+              let lcm = parentStep / g * so
+              let m = max ao parentOffset
+              let rem = ((m - parentOffset) % parentStep + parentStep) % parentStep
+              let startA = if rem = 0 then m else m + (parentStep - rem)
+              let maxSteps = abs so / g + 1
+              let rec loop x guard =
+                if guard <= 0 then None
+                elif (x - ao) % so = 0 then Some x
+                else loop (x + parentStep) (guard - 1)
+              match loop startA maxSteps with
+              | None -> (-1, 1)
+              | Some startAbs ->
+                  let localOffset = int ((int64 startAbs - int64 parentOffset) / int64 parentStep)
+                  let localStep = lcm / parentStep
+                  if int64 localOffset >= newLen then (-1, 1)
+                  else (localOffset, localStep))
+
+  /// Remap LookupRange after an irregular address-list sub-vector (IndexList / Custom).
+  let private remapLookupRangeAfterAddresses (mode: LookupRangeMode<'T>) (addrs: int64[]) =
+    let absToLocal = System.Collections.Generic.Dictionary<int64, int64>(addrs.Length)
+    for i = 0 to addrs.Length - 1 do
+      absToLocal.[addrs.[i]] <- int64 i
+    let mapAbs abs =
+      match absToLocal.TryGetValue abs with
+      | true, local -> Some local
+      | false, _ -> None
+
+    match mode with
+    | LookupRangeUnsupported -> LookupRangeUnsupported
+    | LookupRangeFullFixed -> LookupRangeFullFixed
+    | LookupRangeIndexList f ->
+        LookupRangeIndexList (fun v -> f v |> List.choose mapAbs)
+    | LookupRangeExactFixed f ->
+        LookupRangeIndexList (fun v ->
+          let a, b = f v
+          [ for abs in addrs do
+              if abs >= a && abs <= b then
+                match mapAbs abs with
+                | Some local -> yield local
+                | None -> () ])
+    | LookupRangeStep f ->
+        LookupRangeIndexList (fun v ->
+          let offset, step = f v
+          if offset < 0 || step <= 0 then []
+          else
+            [ for abs in addrs do
+                if abs >= int64 offset && (abs - int64 offset) % int64 step = 0L then
+                  match mapAbs abs with
+                  | Some local -> yield local
+                  | None -> () ])
+
   /// Sub-vector plan: callers compose `valueAt << MapRow` so OptionalValue sources stay typed.
   type SubVectorSpec<'T> =
     { Length: int64
@@ -218,18 +320,14 @@ module LookupRangeExecutor =
           { Length = newLen
             MapRow = fun i -> int64 lr.Offset + int64 lr.Step * i
             AsLong = asLong
-            LookupRange = mode }
+            LookupRange = remapLookupRangeAfterStep mode lr.Offset lr.Step newLen }
     | Choice2Of2 ar ->
-        let addrs = ar |> Seq.map Address.asInt64 |> List.ofSeq
+        let addrs = ar |> Seq.map Address.asInt64 |> Array.ofSeq
         Choice1Of2
           { Length = int64 addrs.Length
             MapRow = fun i -> addrs.[int i]
             AsLong = asLong
-            LookupRange = mode }
-
-  let private gcd (a: int) (b: int) =
-    let rec loop x y = if y = 0 then abs x else loop y (x % y)
-    loop a b
+            LookupRange = remapLookupRangeAfterAddresses mode addrs }
 
   let private emptyRange =
     RangeRestriction.ofSeq 0L Array.empty

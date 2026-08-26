@@ -27,10 +27,11 @@
 - **`VirtualFrameDiagnostics`:** read-only helpers to inspect virtual row index kind, column virtuality, and scheme id.
 - **`Virtual.ReadCsv` LookupRange inference:** when `searchColumn` is set without `searchLookupRange`, low-cardinality string columns (≤64 distinct values) are inferred once at load time.
 - **`Virtual.ReadParquet` LookupRange inference (B19):** same inference as CSV for string search columns when `searchLookupRange` is omitted.
-- **`clipLookupRange`:** remaps Step/IndexList modes after Fixed slices. Prefer **`filterRowsBy2`** for two predicates on the same Step column.
+- **`clipLookupRange`:** remaps Step/IndexList modes after Fixed slices. Step and Custom (`IndexList`) sub-vectors also remap `LookupRange` into the new local domain, so chained `filterRowsBy` on the same Step column keeps the correct row count. `filterRowsBy2` remains the one-pass fused API for two predicates.
 - **Virtual ordered slices / `Series.diff` / `Series.shift`:** ordered `GetAddressRange` / `GetRange` reindex onto linear `0..n-1` addresses so absolute-address partitioned sources align (fixes zero diffs on BigDeedle Ranges backends).
 
 ### Bug fixes
+- **Chained virtual `filterRowsBy` on Step columns:** after a Step `GetSubVector`, `LookupRange` is remapped into the sliced address domain (same-value chain keeps the row count; disjoint Step values yield empty). Custom/IndexList sub-vectors remap the same way.
 - **Virtual wrappers (B10):** boxed / combined / mapped / row-reader sources no longer `failwith` on `LookupRange` / `LookupValue` — they delegate or scan. Partitioned `Ranges` sources accept custom LookupRange results. `Series.fillMissing` / `fillMissingWith` stay virtual. `VirtualVectorBuilder.AsyncBuild` with a virtual scheme raises `NotSupportedException` (use `Series.Materialize` / `AsyncMaterialize`).
 
 ### Tests

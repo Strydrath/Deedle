@@ -59,14 +59,26 @@ let ``Can filterRowsBy2 on disjoint values yielding empty frame`` () =
   (frame |> Frame.filterRowsBy2 "S2" words.[0] "S2" words.[1]).RowCount |> shouldEqual 0
 
 [<Test>]
-let ``Chained filterRowsBy on Step index shrinks rows; filterRowsBy2 preserves count (regression)`` () =
+let ``Chained filterRowsBy on Step index preserves count after remap`` () =
   let n = 1000L
   let words = "lorem ipsum dolor sit amet consectetur adipiscing elit".Split(' ')
   let _, frame, _ = InstrumentedOrdinalSource.createOrderedSearchFrame n
   let once = frame |> Frame.filterRowsBy "S2" words.[0]
   let twice = frame |> Frame.filterRowsBy "S2" words.[0] |> Frame.filterRowsBy "S2" words.[0]
-  twice.RowCount |> should be (lessThan once.RowCount)
+  twice.RowCount |> shouldEqual once.RowCount
+  FrameProbe.rowIndexIsVirtual twice |> shouldEqual true
   (frame |> Frame.filterRowsBy2 "S2" words.[0] "S2" words.[0]).RowCount |> shouldEqual once.RowCount
+
+[<Test>]
+let ``Chained filterRowsBy on Step then disjoint value yields empty`` () =
+  let n = 1000L
+  let words = "lorem ipsum dolor sit amet consectetur adipiscing elit".Split(' ')
+  let _, frame, _ = InstrumentedOrdinalSource.createOrderedSearchFrame n
+  let chained =
+    frame
+    |> Frame.filterRowsBy "S2" words.[0]
+    |> Frame.filterRowsBy "S2" words.[1]
+  chained.RowCount |> shouldEqual 0
 
 [<Test>]
 let ``Can filterRowsBy2 combining Step and IndexList columns`` () =

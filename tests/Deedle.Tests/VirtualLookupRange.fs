@@ -453,6 +453,8 @@ let ``Can remap IndexList via clipLookupRange after Fixed slice`` () =
   let filtered2 = filtered |> Frame.filterRowsBy "S2" "lorem"
   filtered2.RowCount |> shouldEqual trueCount
   FrameProbe.rowIndexIsVirtual filtered2 |> shouldEqual true
+  // Values must still resolve through the remapped IndexList (not absolute parent addrs).
+  filtered2.GetColumn<string>("S2").Values |> Seq.distinct |> Seq.toList |> shouldEqual [ "lorem" ]
 
 [<Test>]
 let ``Can return same row count for ordinal and ordered Step filters`` () =
