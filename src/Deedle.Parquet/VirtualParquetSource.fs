@@ -2,13 +2,11 @@ namespace Deedle.Parquet.Virtual.Sources
 
 open System
 open System.Collections.Concurrent
-open System.Globalization
 open System.IO
 open Deedle
 open Deedle.Virtual
 open Deedle.Vectors.Virtual
 open Parquet.Schema
-open Parquet.Data
 
 /// Options for [`Virtual.ReadParquet`].
 type VirtualReadParquetOptions =
@@ -31,14 +29,17 @@ type internal ParquetColumnKind =
 
 module private OptionalArrays =
   let sumPresent (values: OptionalValue<float>[]) =
-    let mutable s = 0.0
-    for ov in values do
-      if ov.HasValue && not (Double.IsNaN ov.Value) then s <- s + ov.Value
-    s
+    values
+    |> Array.fold (fun acc ov ->
+      match ov with
+      | OptionalValue.Present value when not (Double.IsNaN value) -> acc + value
+      | _ -> acc) 0.0
 
   let mapPresent (f: obj -> 'T) (values: OptionalValue<obj>[]) : OptionalValue<'T>[] =
     values |> Array.map (fun ov ->
-      if ov.HasValue then OptionalValue(f ov.Value) else OptionalValue.Missing)
+      match ov with
+      | OptionalValue.Present value -> OptionalValue(f value)
+      | _ -> OptionalValue.Missing)
 
 /// Shared Parquet file handle: schema, row count, and lazily loaded column arrays.
 /// Column sources capture this instance so the file stays open for the virtual frame lifetime;
@@ -50,14 +51,14 @@ type ParquetFileIndex(path: string) =
   let mutable disposed = false
   // Prefer metadata NumRows — never ReadEntireRowGroup just to count.
   let rowCount =
-    if reader.Metadata <> null && reader.Metadata.NumRows > 0L then reader.Metadata.NumRows
-    elif reader.RowGroupCount = 0 then 0L
-    else
-      let mutable total = 0L
-      for rgIdx in 0 .. reader.RowGroupCount - 1 do
+    match reader.Metadata <> null && reader.Metadata.NumRows > 0L, reader.RowGroupCount with
+    | true, _ -> reader.Metadata.NumRows
+    | false, 0 -> 0L
+    | false, _ ->
+      [| 0 .. reader.RowGroupCount - 1 |]
+      |> Array.sumBy (fun rgIdx ->
         use rgReader = reader.OpenRowGroupReader(rgIdx)
-        total <- total + int64 rgReader.RowCount
-      total
+        int64 rgReader.RowCount)
   let columnCache = ConcurrentDictionary<string, obj>()
 
   member _.Path = path
@@ -201,21 +202,21 @@ module internal ParquetColumnSource =
       match Nullable.GetUnderlyingType clrType with
       | null -> clrType
       | ut -> ut
-    if baseType = typeof<float> then ParquetColumnKind.Float
-    elif baseType = typeof<float32> then ParquetColumnKind.Float32
-    elif baseType = typeof<double> then ParquetColumnKind.Float
-    elif baseType = typeof<int> then ParquetColumnKind.Int
-    elif baseType = typeof<int64> then ParquetColumnKind.Int64
-    elif baseType = typeof<int16> then ParquetColumnKind.Int16
-    elif baseType = typeof<byte> then ParquetColumnKind.Byte
-    elif baseType = typeof<uint16> then ParquetColumnKind.UInt16
-    elif baseType = typeof<uint32> then ParquetColumnKind.UInt32
-    elif baseType = typeof<uint64> then ParquetColumnKind.UInt64
-    elif baseType = typeof<bool> then ParquetColumnKind.Bool
-    elif baseType = typeof<string> then ParquetColumnKind.String
-    elif baseType = typeof<DateTime> then ParquetColumnKind.DateTime
-    elif baseType = typeof<DateTimeOffset> then ParquetColumnKind.DateTimeOffset
-    else ParquetColumnKind.String
+    match baseType with
+    | t when t = typeof<float> || t = typeof<double> -> ParquetColumnKind.Float
+    | t when t = typeof<float32> -> ParquetColumnKind.Float32
+    | t when t = typeof<int> -> ParquetColumnKind.Int
+    | t when t = typeof<int64> -> ParquetColumnKind.Int64
+    | t when t = typeof<int16> -> ParquetColumnKind.Int16
+    | t when t = typeof<byte> -> ParquetColumnKind.Byte
+    | t when t = typeof<uint16> -> ParquetColumnKind.UInt16
+    | t when t = typeof<uint32> -> ParquetColumnKind.UInt32
+    | t when t = typeof<uint64> -> ParquetColumnKind.UInt64
+    | t when t = typeof<bool> -> ParquetColumnKind.Bool
+    | t when t = typeof<string> -> ParquetColumnKind.String
+    | t when t = typeof<DateTime> -> ParquetColumnKind.DateTime
+    | t when t = typeof<DateTimeOffset> -> ParquetColumnKind.DateTimeOffset
+    | _ -> ParquetColumnKind.String
 
 module VirtualParquetSource =
   open ParquetColumnSource
@@ -264,8 +265,9 @@ module VirtualParquetSource =
         (fun () ->
           let data = fileIndex.ReadTypedColumn<string>(name)
           let valueAt row =
-            let ov = data.[int row]
-            if ov.HasValue then ov.Value else ""
+            match data.[int row] with
+            | OptionalValue.Present value -> value
+            | _ -> ""
           VirtualLookupRange.tryInferStringLookupRange fileIndex.Length valueAt)
     let sources =
       keys
@@ -274,80 +276,6 @@ module VirtualParquetSource =
           let kind = columnKind fields.[colIdx]
           createTypedColumn fileIndex name kind (lookupForColumn name kind))
     Virtual.CreateFrame(indexSource, keys, sources)
-
-/// Test-data helpers for Parquet virtual benchmarks (counterpart to `CsvTestData`).
-module ParquetTestData =
-  open Deedle.Parquet
-
-  let defaultDatasetName = "b6-search-100k-random.parquet"
-
-  let createFloatValueSeries (parquetPath: string) =
-    // Keep index alive via the value closure (same lifetime rule as Virtual.ReadParquet).
-    let fileIndex = new ParquetFileIndex(parquetPath)
-    let data = fileIndex.ReadFloatColumn "Value"
-    let src =
-      OrdinalVirtualSource(
-        fileIndex.Length,
-        (fun row ->
-          GC.KeepAlive(fileIndex)
-          data.[int row]),
-        "parquet-file")
-      :> IVirtualVectorSource<float>
-    Virtual.CreateOrdinalSeries(src)
-
-  let private parquetValueSumMatches (parquetPath: string) (expectedSum: float) (rowCount: int64) =
-    try
-      use idx = new ParquetFileIndex(parquetPath)
-      if idx.Length <> rowCount then false
-      else
-        let actual = OptionalArrays.sumPresent (idx.ReadFloatColumn "Value")
-        abs (actual - expectedSum) < 1.0
-    with _ -> false
-
-  let private writeTypedSearchParquet (parquetPath: string) (csvPath: string) =
-    // Stream CSV fields into typed Parquet columns (schema CLR types drive Virtual.ReadParquet).
-    // Parquet.Net rejects DateTimeOffset fields — store UTC DateTime and convert on read.
-    // Use CsvLineIndex so quoted commas match Virtual.ReadCsv parsing.
-    let idAcc = ResizeArray<Nullable<int64>>()
-    let tsAcc = ResizeArray<Nullable<DateTime>>()
-    let catAcc = ResizeArray<string>()
-    let valAcc = ResizeArray<Nullable<float>>()
-    let lineIndex = Deedle.Virtual.Sources.CsvLineIndex(csvPath)
-    for row in 0L .. lineIndex.Length - 1L do
-      let parts = lineIndex.ReadFields(row)
-      idAcc.Add(Nullable(Int64.Parse(parts.[0], CultureInfo.InvariantCulture)))
-      let dto =
-        DateTimeOffset.Parse(parts.[1], CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)
-      tsAcc.Add(Nullable(dto.UtcDateTime))
-      catAcc.Add(parts.[2])
-      valAcc.Add(Nullable(Double.Parse(parts.[3], CultureInfo.InvariantCulture)))
-    let schema = ParquetSchema([|
-      DataField("Id", typeof<Nullable<int64>>) :> Field
-      DataField("Timestamp", typeof<Nullable<DateTime>>) :> Field
-      DataField("Category", typeof<string>) :> Field
-      DataField("Value", typeof<Nullable<float>>) :> Field |])
-    let dataFields = schema.GetDataFields()
-    if File.Exists parquetPath then File.Delete parquetPath
-    use stream = File.Create parquetPath
-    use writer = global.Parquet.ParquetWriter.CreateAsync(schema, stream).GetAwaiter().GetResult()
-    use rg = writer.CreateRowGroup()
-    rg.WriteColumnAsync(DataColumn(dataFields.[0], idAcc.ToArray())).GetAwaiter().GetResult()
-    rg.WriteColumnAsync(DataColumn(dataFields.[1], tsAcc.ToArray())).GetAwaiter().GetResult()
-    rg.WriteColumnAsync(DataColumn(dataFields.[2], catAcc.ToArray())).GetAwaiter().GetResult()
-    rg.WriteColumnAsync(DataColumn(dataFields.[3], valAcc.ToArray())).GetAwaiter().GetResult()
-
-  let ensureSearchParquet (parquetPath: string) (rowCount: int64) =
-    let csvPath = Path.ChangeExtension(parquetPath, ".csv")
-    Deedle.Virtual.Sources.CsvTestData.ensureSearchCsv csvPath rowCount |> ignore
-    let expectedSum = Deedle.Virtual.Sources.CsvTestData.readMeta(csvPath).ValueSum
-    if parquetValueSumMatches parquetPath expectedSum rowCount then parquetPath
-    else
-      writeTypedSearchParquet parquetPath csvPath
-      if not (parquetValueSumMatches parquetPath expectedSum rowCount) then
-        failwithf
-          "ParquetTestData: regenerated '%s' but Value sum still mismatches CSV meta (expected ~%g)"
-          parquetPath expectedSum
-      parquetPath
 
 [<AutoOpen>]
 module VirtualParquetExtensions =

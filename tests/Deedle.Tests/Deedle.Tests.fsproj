@@ -12,6 +12,9 @@
     <Compile Include="../Common/FsUnit.fs">
       <Link>FsUnit.fs</Link>
     </Compile>
+    <Compile Include="../Common/ParquetTestData.fs">
+      <Link>ParquetTestData.fs</Link>
+    </Compile>
     <Compile Include="Common.fs" />
     <Compile Include="Vector.fs" />
     <Compile Include="MultiKey.fs" />

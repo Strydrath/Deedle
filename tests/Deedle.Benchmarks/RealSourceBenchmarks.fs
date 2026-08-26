@@ -4,6 +4,7 @@ open System
 open System.IO
 open BenchmarkDotNet.Attributes
 open Deedle
+open Deedle.TestData
 open Deedle.Virtual
 open Deedle.Virtual.Sources
 open Deedle.Parquet

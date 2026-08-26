@@ -1409,14 +1409,15 @@ module Series =
         let present = ResizeArray<_>()
         for addr in series.Index.AddressOperations.Range do
           if series.Vector.GetValue(addr).HasValue then present.Add(addr)
-        if int64 present.Count = series.Index.KeyCount then series
-        elif present.Count = 0 then
-          series.WhereOptional(fun (KeyValue(_, v)) -> v.HasValue)
-        else
-          let mapping = RangeRestriction.ofSeq (int64 present.Count) present
-          let newIndex, cmd = series.IndexBuilder.GetAddressRange((series.Index, Vectors.Return 0), mapping)
-          let newVector = series.VectorBuilder.Build(newIndex.AddressingScheme, cmd, [| series.Vector |])
-          Series(newIndex, newVector, series.VectorBuilder, series.IndexBuilder)
+        match present.Count with
+        | c when int64 c = series.Index.KeyCount -> series
+        | 0 ->
+            series.WhereOptional(fun (KeyValue(_, v)) -> v.HasValue)
+        | _ ->
+            let mapping = RangeRestriction.ofSeq (int64 present.Count) present
+            let newIndex, cmd = series.IndexBuilder.GetAddressRange((series.Index, Vectors.Return 0), mapping)
+            let newVector = series.VectorBuilder.Build(newIndex.AddressingScheme, cmd, [| series.Vector |])
+            Series(newIndex, newVector, series.VectorBuilder, series.IndexBuilder)
     | _ ->
         series.WhereOptional(fun (KeyValue(_, v)) -> v.HasValue)
 
