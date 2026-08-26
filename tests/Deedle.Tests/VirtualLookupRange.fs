@@ -334,7 +334,12 @@ let ``Can filter with FullFixed LookupRange retaining entire series`` () =
   filterDelta.LookupRangeCount |> shouldEqual 1
   filterDelta.ValueAtCount |> shouldEqual 0
   FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
+  // Naive FullFixed keeps every row (unlike Step, which shrinks to ~N/period).
   filtered.RowCount |> shouldEqual (int LookupRangeFixture.nLarge)
+  let _, stepFrame, words = InstrumentedOrdinalSource.createOrderedSearchFrame LookupRangeFixture.nLarge
+  let stepCount = (stepFrame |> Frame.filterRowsBy "S2" LookupRangeFixture.searchValue).RowCount
+  stepCount |> shouldEqual (LookupRangeFixture.expectedMatchCount LookupRangeFixture.nLarge words.Length)
+  stepCount |> should be (lessThan filtered.RowCount)
 
 [<Test>]
 let ``Can filter ordinal frame using LookupRange like ordered index`` () =
@@ -355,14 +360,25 @@ let ``Can read only requested rows after Step filter`` () =
   readDelta.ValueAtCount |> should be (lessThan (readN * 3))
 
 [<Test>]
-let ``Can pay full read cost with FullFixed naive range`` () =
-  let c, frame, _ =
-    InstrumentedOrdinalSource.createOrderedSearchFrameWith LookupRangeFixture.nLarge LookupRangeFullFixed
-  let readN = 20
-  let filtered, filterDelta, readDelta = LookupRangeFixture.filterAndRead frame c readN
-  filterDelta.ValueAtCount |> shouldEqual 0
-  filtered.RowCount |> shouldEqual (int LookupRangeFixture.nLarge)
-  readDelta.ValueAtCount |> should be (lessThan (readN * 3))
+let ``Can pay more ValueAt cost draining FullFixed filter than Step filter`` () =
+  let n = 10_000L
+  let cFull, frameFull, _ =
+    InstrumentedOrdinalSource.createOrderedSearchFrameWith n LookupRangeFullFixed
+  let cStep, frameStep, words = InstrumentedOrdinalSource.createOrderedSearchFrame n
+  let fullFiltered = frameFull |> Frame.filterRowsBy "S2" LookupRangeFixture.searchValue
+  let stepFiltered = frameStep |> Frame.filterRowsBy "S2" LookupRangeFixture.searchValue
+  fullFiltered.RowCount |> shouldEqual (int n)
+  stepFiltered.RowCount |> shouldEqual (LookupRangeFixture.expectedMatchCount n words.Length)
+  cFull.Reset()
+  fullFiltered.GetColumn<int64>("S1").Values |> Seq.length |> ignore
+  let fullReads = cFull.Snapshot().ValueAtCount
+  cStep.Reset()
+  stepFiltered.GetColumn<int64>("S1").Values |> Seq.length |> ignore
+  let stepReads = cStep.Snapshot().ValueAtCount
+  // FullFixed keeps all rows, so draining S1 touches at least every row; Step only the matches.
+  fullReads |> should be (greaterThanOrEqualTo (int n))
+  stepReads |> should be (greaterThanOrEqualTo stepFiltered.RowCount)
+  fullReads |> should be (greaterThan stepReads)
 
 [<Test>]
 let ``Can scan mapped search column at filter time without reverse lookup`` () =
@@ -548,3 +564,81 @@ let ``LookupRangeExecutor returns empty range for invalid Step offset`` () =
 let ``LookupRangeExecutor raises NotSupportedException when LookupRange is unsupported`` () =
   (fun () -> LookupRangeExecutor.lookupRange 8L LookupRangeUnsupported "x" "test" |> ignore)
   |> should throw typeof<NotSupportedException>
+
+[<Test>]
+let ``StepRange Count and enumeration raise NotSupportedException`` () =
+  let range = { Offset = 1; Step = 3 } :> IRangeRestriction<Address>
+  (fun () -> range.Count |> ignore) |> should throw typeof<NotSupportedException>
+  (fun () -> (range :> seq<Address>) |> Seq.toList |> ignore)
+  |> should throw typeof<NotSupportedException>
+
+[<Test>]
+let ``scan LookupRange returns matching row indices`` () =
+  let valueAt i = if i % 3L = 0L then "hit" else "miss"
+  match VirtualLookupRange.scan 9L valueAt with
+  | LookupRangeIndexList f -> f "hit" |> shouldEqual [ 0L; 3L; 6L ]
+  | _ -> failwith "expected LookupRangeIndexList"
+
+[<Test>]
+let ``forCategorical returns indices from the provided map`` () =
+  let mode =
+    VirtualLookupRange.forCategorical (Map.ofList [ "a", [ 0L; 4L ]; "b", [ 1L ] ])
+  match mode with
+  | LookupRangeIndexList f ->
+      f "a" |> shouldEqual [ 0L; 4L ]
+      f "missing" |> shouldEqual []
+  | _ -> failwith "expected LookupRangeIndexList"
+
+[<Test>]
+let ``tryInferStringLookupRange infers categorical IndexList when not a cycle`` () =
+  // Same vocabulary repeatedly clustered, not a repeating cycle by distinct order.
+  let valueAt i =
+    if i < 3L then "a"
+    elif i < 6L then "b"
+    else "a"
+  match VirtualLookupRange.tryInferStringLookupRange 8L valueAt with
+  | Some(_, desc) -> desc |> should haveSubstring "categorical IndexList"
+  | None -> failwith "expected categorical inference"
+
+[<Test>]
+let ``Can remap Step LookupRange after Step GetSubVector for chained filter`` () =
+  let words = [| "a"; "b"; "c" |]
+  let n = 24L
+  let mode = VirtualLookupRange.forRepeatingCycle words
+  let range = LookupRangeExecutor.lookupRange n mode "b" "test"
+  match LookupRangeExecutor.getSubVector n mode None range with
+  | Choice1Of2 spec ->
+      spec.Length |> shouldEqual 8L
+      // Local domain is the "b" stride; filtering "b" again should keep all local rows.
+      match LookupRangeExecutor.lookupRange spec.Length spec.LookupRange "b" "test" with
+      | RangeRestriction.Custom(:? StepRange as s) ->
+          s.Offset |> shouldEqual 0
+          s.Step |> shouldEqual 1
+      | other -> failwithf "expected local StepRange for same value, got %A" other
+      // Disjoint cycle value should yield empty after remap.
+      match LookupRangeExecutor.lookupRange spec.Length spec.LookupRange "a" "test" with
+      | RangeRestriction.Custom ar -> Seq.isEmpty ar |> shouldEqual true
+      | other -> failwithf "expected empty custom range for disjoint value, got %A" other
+  | Choice2Of2 _ -> failwith "expected SubVectorSpec"
+
+[<Test>]
+let ``Can remap ExactFixed LookupRange after Step GetSubVector`` () =
+  let n = 20L
+  let mode = LookupRangeExactFixed (fun _ -> (2L, 14L))
+  let stepRange = RangeRestriction.Custom { Offset = 2; Step = 3 } : RangeRestriction<Address>
+  match LookupRangeExecutor.getSubVector n mode None stepRange with
+  | Choice1Of2 spec ->
+      // Parent Step 2,5,8,11,14,17 — ExactFixed [2,14] keeps 2,5,8,11,14 → local 0..4
+      match LookupRangeExecutor.lookupRange spec.Length spec.LookupRange "x" "test" with
+      | RangeRestriction.Fixed(lo, hi) ->
+          Address.asInt64 lo |> shouldEqual 0L
+          Address.asInt64 hi |> shouldEqual 4L
+      | other -> failwithf "expected remapped Fixed, got %A" other
+  | Choice2Of2 _ -> failwith "expected SubVectorSpec"
+
+[<Test>]
+let ``getSubVector raises when Fixed hi is less than lo`` () =
+  let mode = LookupRangeFullFixed
+  let bad = RangeRestriction.Fixed(Address.ofInt64 5L, Address.ofInt64 1L)
+  (fun () -> LookupRangeExecutor.getSubVector 10L mode None bad |> ignore)
+  |> should throw typeof<InvalidOperationException>

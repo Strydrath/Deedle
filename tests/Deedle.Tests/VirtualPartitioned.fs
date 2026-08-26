@@ -343,7 +343,7 @@ let ``Lookup can search within a single partition`` () =
   accessedDataParts valSrc |> shouldEqual [10]
 
 [<Test>]
-let ``Lookup can search accross partition boundaries`` () =
+let ``Can lookup across partition boundaries`` () =
   let idxSrc, valSrc, ts = createTimeSeries 1000 (fun n -> 10)
   ts.Get((date 0 9).AddDays(1.0), Lookup.ExactOrSmaller) |> shouldEqual 9.0
   ts.Get((date 0 9).AddDays(1.0), Lookup.ExactOrGreater) |> shouldEqual 1000000.0
@@ -438,7 +438,7 @@ let ``Slicing with out of range keys or reversed order produces empty series`` (
 // ------------------------------------------------------------------------------------------------
 
 [<Test>]
-let ``Cen perform slicing on an ordinally indexed series`` () =
+let ``Can perform slicing on an ordinally indexed series`` () =
   let valSrc, ts = createOrdinalSeries 1000 (fun n -> 10)
   let ss = ts.[1005L .. 1014L]
 
@@ -448,7 +448,7 @@ let ``Cen perform slicing on an ordinally indexed series`` () =
     ss.[k] |> shouldEqual ts.[k]
 
 [<Test>]
-let ``Cen perform slicing and merging on an ordinally indexed series`` () =
+let ``Can perform slicing and merging on an ordinally indexed series`` () =
   let valSrc, ts = createOrdinalSeries 1000 (fun n -> 10)
   let ss = Series.mergeAll [ ts.[1005L .. 1014L]; ts.[2005L .. 2014L] ]
   for k in ss.Keys do
@@ -518,7 +518,7 @@ let ``Equality returns false and works on very large series`` () =
   ts2 = ts1 |> shouldEqual false
 
 [<Test>]
-let ``Equality test returns true on small virutal series`` () =
+let ``Equality test returns true on small virtual series`` () =
   let _, _, ts1 = createTimeSeries 1000 (fun n -> 5000)
   let ts1sm = ts1 |> Series.take 10
   let ts2sm = series [ for i in 0 .. 9 -> date 0 i => float i ]
@@ -539,7 +539,7 @@ let ``Can sample large time series using explicitly specified list of dates`` ()
   |> List.ofSeq |> shouldEqual [ 0.0 .. 1000000.0 .. 999000000.0 ]
 
 [<Test>]
-let ``Can sample large time series by time without evauating it`` () =
+let ``Can sample large time series by time without evaluating it`` () =
   let _, valSrc, s = createTimeSeries 1000 (fun n -> 5000)
   let sampled = s |> Series.sampleTimeInto (TimeSpan.FromDays 10000.0) Direction.Forward id
   valSrc.AccessedData |> shouldEqual []
@@ -634,7 +634,7 @@ let ``Can perform grouping on a small virtual series`` () =
   |> shouldEqual <| series [1 => 2000011.5; 2 => 2000035.5; 3 => 2000059.5; 4 => 2000083.5; 5 => 2000098. ]
 
 // ------------------------------------------------------------------------------------------------
-// Creating frames with vitual series
+// Creating frames with virtual series
 // ------------------------------------------------------------------------------------------------
 
 let createSmallFrame partNum partSize =

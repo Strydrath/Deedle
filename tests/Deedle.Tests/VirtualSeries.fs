@@ -211,6 +211,39 @@ let ``Can drop missing on virtual series after presence scan`` () =
   dropped.ValueCount |> shouldEqual dropped.KeyCount
   c.Snapshot().ValueAtCount |> should be (greaterThan 0)
 
+[<Test>]
+let ``Can dropMissing on virtual series with no missings as identity`` () =
+  let c, s = InstrumentedOrdinalSource.createFloatSeries 64L
+  c.Reset()
+  let dropped = s |> Series.dropMissing
+  Object.ReferenceEquals(dropped, s) |> shouldEqual true
+  SeriesProbe.isVirtual dropped |> shouldEqual true
+  dropped.KeyCount |> shouldEqual 64
+  // Presence scan touches every address once; no rebuild.
+  c.Snapshot().ValueAtCount |> shouldEqual 64
+
+[<Test>]
+let ``Can dropMissing on virtual series when all values are missing`` () =
+  let src =
+    OrdinalVirtualSource(16L, (fun _ -> OptionalValue.Missing), "all-missing")
+    :> IVirtualVectorSource<float>
+  let s = Virtual.CreateOrdinalSeries(src)
+  let dropped = s |> Series.dropMissing
+  dropped.KeyCount |> shouldEqual 0
+  dropped.ValueCount |> shouldEqual 0
+
+[<Test>]
+let ``Can pctChange virtual series staying virtual until read`` () =
+  let c = AccessCounters()
+  let src = InstrumentedOrdinalSource<float>(32L, (fun i -> float (i + 1L)), c, hasMissing=false)
+  let s = Virtual.CreateOrdinalSeries(src)
+  c.Reset()
+  let pct = s |> Series.pctChange 1
+  SeriesProbe.isVirtual pct |> shouldEqual true
+  c.Snapshot().ValueAtCount |> shouldEqual 0
+  // (2-1)/1 = 1.0 at key 1
+  pct.[1L] |> shouldEqual 1.0
+
 // ------------------------------------------------------------------------------------------------
 // Windowing, grouping, sorting
 // ------------------------------------------------------------------------------------------------
@@ -233,10 +266,16 @@ let ``Can aggregate window sums materializing result series`` () =
 
 [<Test>]
 let ``Can group virtual series materializing nested groups`` () =
-  let c, s = InstrumentedOrdinalSource.createFloatSeries 64L
+  let n = 64L
+  let c, s = InstrumentedOrdinalSource.createFloatSeries n
   let grouped = s |> Series.groupBy (fun _k v -> int v % 4)
-  SeriesProbe.isLinear (grouped.GetAt(0)) |> shouldEqual true
-  c.Snapshot().ValueAtCount |> should be (greaterThan 0)
+  // Outer series and every nested group are linear (documented materialize).
+  SeriesProbe.isLinear grouped |> shouldEqual true
+  grouped.KeyCount |> shouldEqual 4
+  for KeyValue(_, nested) in grouped.Observations do
+    SeriesProbe.isLinear nested |> shouldEqual true
+  // Grouping must visit every value at least once.
+  c.Snapshot().ValueAtCount |> should be (greaterThanOrEqualTo (int n))
 
 [<Test>]
 let ``Can sort virtual series by value materializing`` () =

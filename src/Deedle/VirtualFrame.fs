@@ -69,6 +69,7 @@ open Deedle
 open Deedle.Ranges
 open Deedle.Internal
 open Deedle.Addressing
+open Deedle.Vectors
 open Deedle.Vectors.Virtual
 open Deedle.Indices.Virtual
 open System
@@ -300,3 +301,59 @@ type OrdinalVirtualSource<'T>
 
   member _.Length = length
   member _.RawValueAt(i: int64) = valueAt i
+
+// ------------------------------------------------------------------------------------------------
+// Diagnostics for virtual frames
+// ------------------------------------------------------------------------------------------------
+
+/// Describes how the row index of a virtual frame is stored.
+type VirtualRowIndexKind =
+  | OrderedVirtual
+  | OrdinalVirtual
+  | LinearOrOther
+
+module private VirtualFrameDiag =
+  /// True when the vector uses a virtual addressing scheme (unwrap not needed; wrappers preserve scheme).
+  let isVirtualVector (vec: IVector) =
+    match vec.AddressingScheme with
+    | :? VirtualAddressingScheme -> true
+    | _ -> false
+
+type Virtual with
+  /// Classify how the frame's row index is stored (ordered/ordinal virtual vs linear).
+  static member GetRowIndexKind(frame: Frame<'R, 'C>) =
+    match frame.RowIndex with
+    | :? VirtualOrdinalIndex -> VirtualRowIndexKind.OrdinalVirtual
+    | :? VirtualOrderedIndex<'R> -> VirtualRowIndexKind.OrderedVirtual
+    | _ -> VirtualRowIndexKind.LinearOrOther
+
+  /// True when the row index is ordered or ordinal virtual.
+  static member IsVirtualRowIndex(frame: Frame<'R, 'C>) =
+    match Virtual.GetRowIndexKind frame with
+    | VirtualRowIndexKind.LinearOrOther -> false
+    | OrderedVirtual | OrdinalVirtual -> true
+
+  /// True when the named column uses a virtual addressing scheme.
+  static member IsVirtualColumn(frame: Frame<'R, 'C>, column: 'C when 'C : equality) =
+    match frame.ColumnIndex.Lookup(column, Lookup.Exact, fun _ -> true) with
+    | OptionalValue.Present(_, addr) ->
+        match frame.Data.GetValue addr with
+        | OptionalValue.Present vec -> VirtualFrameDiag.isVirtualVector vec
+        | OptionalValue.Missing -> false
+    | OptionalValue.Missing -> false
+
+  /// Short human-readable summary of row count, row-index kind, and column count.
+  static member Describe(frame: Frame<'R, 'C>) =
+    let kind =
+      match Virtual.GetRowIndexKind frame with
+      | OrderedVirtual -> "ordered virtual"
+      | OrdinalVirtual -> "ordinal virtual (0..N-1)"
+      | LinearOrOther -> "linear / materialized"
+    sprintf "rows=%d, rowIndex=%s, columns=%d" frame.RowCount kind frame.ColumnCount
+
+  /// Scheme id from the virtual row-index source, when present (e.g. `"csv-file"`, instrumented test ids).
+  static member TryGetRowIndexSchemeId(frame: Frame<'R, 'C>) =
+    match frame.RowIndex with
+    | :? VirtualOrderedIndex<'R> as idx -> Some idx.Source.AddressingSchemeID
+    | :? VirtualOrdinalIndex as idx -> Some idx.Source.AddressingSchemeID
+    | _ -> None

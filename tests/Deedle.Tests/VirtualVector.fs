@@ -110,7 +110,7 @@ let ``Can delegate LookupRange through mapped source with reverse mapping`` () =
   c.Snapshot().ValueAtCount |> shouldEqual 0
 
 [<Test>]
-let ``Non-exact LookupValue on wrapper raises NotSupportedException`` () =
+let ``Can throw when non-exact LookupValue on wrapper is used`` () =
   let _, src = InstrumentedOrdinalSource.createFloats 8L
   let mapped = VirtualVectorSource.map None (fun _ ov -> ov) src
   (fun () -> mapped.LookupValue(1.0, Lookup.Greater, always) |> ignore)
@@ -163,7 +163,7 @@ let ``Row reader virtual source LookupRange does not throw`` () =
   customCount (reader.LookupRange(Unchecked.defaultof<_>)) |> shouldEqual 0
 
 [<Test>]
-let ``MergeWith on boxed source rejects non-boxed peers`` () =
+let ``Can throw when MergeWith on boxed source gets non-boxed peers`` () =
   let _, src = InstrumentedOrdinalSource.createFloats 4L
   let boxed = VirtualVectorSource.boxSource(src)
   let peer = OrdinalVirtualSource(4L, (fun i -> OptionalValue(box i)), "peer") :> IVirtualVectorSource<obj>
@@ -171,14 +171,14 @@ let ``MergeWith on boxed source rejects non-boxed peers`` () =
   |> should throw typeof<InvalidOperationException>
 
 [<Test>]
-let ``MergeWith on mapped source rejects non-mapped peers`` () =
+let ``Can throw when MergeWith on mapped source gets non-mapped peers`` () =
   let _, src = InstrumentedOrdinalSource.createFloats 4L
   let mapped = VirtualVectorSource.map None (fun _ ov -> ov) src
   (fun () -> mapped.MergeWith([ src :> IVirtualVectorSource<_> ]) |> ignore)
   |> should throw typeof<InvalidOperationException>
 
 [<Test>]
-let ``MergeWith on combined source rejects non-combined peers`` () =
+let ``Can throw when MergeWith on combined source gets non-combined peers`` () =
   let _, s1 = InstrumentedOrdinalSource.createFloats 4L
   let s2 = InstrumentedOrdinalSource<float>(4L, float, AccessCounters())
   let combined =
@@ -191,7 +191,7 @@ let ``MergeWith on combined source rejects non-combined peers`` () =
   |> should throw typeof<InvalidOperationException>
 
 [<Test>]
-let ``AsyncBuild on virtual scheme raises NotSupportedException`` () =
+let ``Can throw when AsyncBuild uses a virtual scheme`` () =
   let _, s = InstrumentedOrdinalSource.createOrdinalSeries 8L
   let ex =
     Assert.Throws<NotSupportedException>(fun () ->
@@ -206,20 +206,47 @@ let ``AsyncBuild on virtual scheme raises NotSupportedException`` () =
 // ------------------------------------------------------------------------------------------------
 
 [<Test>]
-let ``withLinearAddressing is a no-op on already linear ordinal source`` () =
+let ``Can apply withLinearAddressing as no-op on already linear ordinal source`` () =
   let src = OrdinalVirtualSource(5L, (fun i -> OptionalValue i), "test") :> IVirtualVectorSource<_>
   let wrapped = VirtualVectorSource.withLinearAddressing src
   Object.ReferenceEquals(src, wrapped) |> shouldEqual true
 
 [<Test>]
-let ``withLinearAddressing is idempotent on ILinearAddressedSource`` () =
-  let src = OrdinalVirtualSource(5L, (fun i -> OptionalValue i), "test") :> IVirtualVectorSource<_>
-  // Force a wrap by building through GetSubVector + builder path: double-wrap the marker.
-  let once =
-    match VirtualVectorSource.withLinearAddressing src with
-    | s -> s
+let ``Can apply withLinearAddressing wrapping non-zero-based address ops idempotently`` () =
+  let length = 10L
+  let baseAddr = 100L
+  let absOps =
+    { new IAddressOperations with
+        member _.FirstElement = Address.ofInt64 baseAddr
+        member _.LastElement = Address.ofInt64 (baseAddr + length - 1L)
+        member _.AddressOf(offset) = Address.ofInt64 (baseAddr + offset)
+        member _.OffsetOf(addr) = Address.asInt64 addr - baseAddr
+        member _.AdjustBy(addr, offset) = Address.ofInt64 (Address.asInt64 addr + offset)
+        member _.Range =
+          seq { for i in 0L .. length - 1L -> Address.ofInt64 (baseAddr + i) } }
+  let shifted =
+    { new IVirtualVectorSource<float> with
+        member _.ValueAt(loc) =
+          let i = Address.asInt64 loc.Address - baseAddr
+          OptionalValue(float i)
+        member _.LookupRange(_) =
+          RangeRestriction.Fixed(Address.ofInt64 baseAddr, Address.ofInt64 (baseAddr + length - 1L))
+        member _.LookupValue(_, _, _) = OptionalValue.Missing
+        member _.GetSubVector(_) = invalidOp "not used"
+        member _.MergeWith(_) = invalidOp "not used"
+      interface IVirtualVectorSource with
+        member _.Length = length
+        member _.AddressingSchemeID = "abs-shifted"
+        member _.ElementType = typeof<float>
+        member _.AddressOperations = absOps
+        member this.Invoke(op) = op.Invoke(this :?> IVirtualVectorSource<float>) }
+  let once = VirtualVectorSource.withLinearAddressing shifted
+  match once with
+  | :? VirtualVectorSource.ILinearAddressedSource<float> -> ()
+  | _ -> failwith "expected ILinearAddressedSource wrapper"
   let twice = VirtualVectorSource.withLinearAddressing once
   Object.ReferenceEquals(once, twice) |> shouldEqual true
+  once.ValueAt(KnownLocation(Address.ofInt64 3L, 3L)) |> shouldEqual (OptionalValue 3.0)
 
 [<Test>]
 let ``fillMissing constant NaN on float source is a no-op`` () =

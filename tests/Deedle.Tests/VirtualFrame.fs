@@ -431,7 +431,7 @@ let ``Can materialize virtual series and access it repeatedly`` () =
   src.AccessList |> shouldEqual [ 100L .. 200L ]
 
 // ------------------------------------------------------------------------------------------------
-// Virutal series with ordered index
+// Virtual series with ordered index
 // ------------------------------------------------------------------------------------------------
 
 let createTimeSeries () =
@@ -533,7 +533,7 @@ let ``Accessing series of rows accesses only required values`` () =
   s2.AccessList |> shouldEqual [0L; 1L; 9999999L; 10000000L]
 
 [<Test>]
-let ``Can use ColumnsApply and 'sin' witout evaluating a frame`` () =
+let ``Can use ColumnsApply and 'sin' without evaluating a frame`` () =
   let s1 = TrackingSource.CreateFloats(0L, 10000000000L)
   let s2 = TrackingSource.CreateFloats(0L, 10000000000L)
   let f1 = Virtual.CreateOrdinalFrame( ["S1"; "S2"], [s1; s2] )
