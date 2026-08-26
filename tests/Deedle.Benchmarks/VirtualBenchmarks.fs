@@ -189,7 +189,7 @@ type VirtualBenchmarks() =
     member _.Join_IdenticalOrdinalFrames() =
         joinLeft.Join(joinRight, JoinKind.Outer) |> ignore
 
-    /// First mini-batch only — early-stop ML path (B16).
+    /// First mini-batch only — early-stop ML path (.
     [<Benchmark>]
     member _.MaterializeFloatBatches_First1k() =
         Virtual.MaterializeFloatBatches(joinLeft, 1000L, ["A"]) |> Seq.head |> ignore

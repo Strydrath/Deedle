@@ -719,7 +719,7 @@ let ``Can merge virtual series of rows indexed by time`` () =
   fmr.[ith 7670246L] |> shouldEqual <| fer.[ith 7670246L]
 
 // ------------------------------------------------------------------------------------------------
-// B16 — batch materialization iterator
+// Batch materialization iterator
 // ------------------------------------------------------------------------------------------------
 
 [<Test>]
