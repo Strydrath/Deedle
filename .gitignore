@@ -31,3 +31,5 @@ BenchmarkDotNet.Artifacts/
 tests/**/data/*.parquet
 tests/**/data/b6-search-*.csv
 tests/**/data/b6-search-*.csv.meta
+
+.nuget-packages
