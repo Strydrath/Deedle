@@ -13,11 +13,11 @@ type StepRange =
   { Offset: int
     Step: int }
   interface IRangeRestriction<Address> with
-    member _.Count = failwith "Count not supported on StepRange"
+    member _.Count = raise (NotSupportedException("Count not supported on StepRange"))
   interface seq<Address> with
-    member _.GetEnumerator() = failwith "enumeration not supported on StepRange"
+    member _.GetEnumerator() = raise (NotSupportedException("enumeration not supported on StepRange"))
   interface System.Collections.IEnumerable with
-    member _.GetEnumerator() = failwith "enumeration not supported on StepRange"
+    member _.GetEnumerator() = raise (NotSupportedException("enumeration not supported on StepRange"))
 
 /// How `LookupRange` behaves on searchable virtual columns (quality / correctness axis).
 type LookupRangeMode<'T> =

@@ -61,14 +61,14 @@ let ``Can infer Step LookupRange on Parquet Category column`` () =
       indexColumn = "Timestamp",
       searchColumn = "Category",
       columnKeys = [ "Id"; "Category" ])
-  VirtualFrameDiagnostics.IsVirtualColumn(frame, "Category") |> shouldEqual true
+  Virtual.IsVirtualColumn(frame, "Category") |> shouldEqual true
   let filtered = frame |> Frame.filterRowsBy "Category" "lorem"
-  VirtualFrameDiagnostics.GetRowIndexKind filtered |> shouldEqual VirtualRowIndexKind.OrderedVirtual
+  Virtual.GetRowIndexKind filtered |> shouldEqual VirtualRowIndexKind.OrderedVirtual
   filtered.RowCount |> shouldEqual 12_500
   FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
 
 [<Test; NonParallelizable>]
-let ``ReadParquet throws NotSupportedException when search column has no LookupRange`` () =
+let ``Can throw when ReadParquet search column has no LookupRange`` () =
   SearchDataset.ensureParquet()
   let frame =
     Virtual.ReadParquet(
@@ -79,7 +79,7 @@ let ``ReadParquet throws NotSupportedException when search column has no LookupR
   |> should throw typeof<NotSupportedException>
 
 [<Test>]
-let ``ReadParquet high-cardinality search column requires explicit LookupRange`` () =
+let ``Can throw when ReadParquet high-cardinality search needs explicit LookupRange`` () =
   let path = Path.Combine(Path.GetTempPath(), sprintf "deedle-parquet-hicard-%d.parquet" Environment.TickCount)
   try
     let n = 100
@@ -191,12 +191,12 @@ let ``Can read all Parquet column CLR types through Virtual ReadParquet`` () =
     if File.Exists path then try File.Delete path with _ -> ()
 
 [<Test>]
-let ``ReadParquet throws when file is missing`` () =
+let ``Can throw when ReadParquet file is missing`` () =
   (fun () -> Virtual.ReadParquet(Path.Combine(Path.GetTempPath(), "deedle-parquet-missing.parquet")) |> ignore)
   |> should throw typeof<System.Exception>
 
-[<Test>]
-let ``ReadParquet throws when column name is unknown`` () =
+[<Test; NonParallelizable>]
+let ``Can throw when ReadParquet column name is unknown`` () =
   SearchDataset.ensureParquet()
   (fun () ->
     Virtual.ReadParquet(
@@ -205,3 +205,58 @@ let ``ReadParquet throws when column name is unknown`` () =
       columnKeys = [ "NotAColumn" ])
     |> ignore)
   |> should throw typeof<System.Exception>
+
+[<Test; NonParallelizable>]
+let ``Can auto-detect Timestamp index column when reading Parquet virtually`` () =
+  SearchDataset.ensureParquet()
+  let frame = Virtual.ReadParquet(SearchDataset.parquetPath, columnKeys = [ "Id"; "Category" ])
+  Virtual.GetRowIndexKind frame |> shouldEqual VirtualRowIndexKind.OrderedVirtual
+  FrameProbe.rowIndexIsVirtual frame |> shouldEqual true
+  frame.RowCount |> shouldEqual (int SearchDataset.nLarge)
+  frame.RowKeys |> Seq.head |> fun (k: DateTimeOffset) -> k.Year |> shouldEqual 2000
+
+[<Test; NonParallelizable>]
+let ``Can infer remaining Parquet columns when columnKeys omitted`` () =
+  SearchDataset.ensureParquet()
+  let frame = Virtual.ReadParquet(SearchDataset.parquetPath, indexColumn = "Timestamp")
+  let keys = frame.ColumnKeys |> Seq.toList
+  keys |> List.contains "Id" |> shouldEqual true
+  keys |> List.contains "Category" |> shouldEqual true
+  keys |> List.contains "Value" |> shouldEqual true
+  keys |> List.contains "Timestamp" |> shouldEqual false
+
+[<Test; NonParallelizable>]
+let ``Can throw when ReadParquet index column is unknown`` () =
+  SearchDataset.ensureParquet()
+  (fun () ->
+    Virtual.ReadParquet(
+      SearchDataset.parquetPath,
+      indexColumn = "NotAnIndex",
+      columnKeys = [ "Id" ])
+    |> ignore)
+  |> should throw typeof<System.Exception>
+
+[<Test>]
+let ``Can throw when ReadParquet file has no data rows`` () =
+  let path = Path.Combine(Path.GetTempPath(), sprintf "deedle-parquet-empty-%d.parquet" Environment.TickCount64)
+  try
+    let schema = Parquet.Schema.ParquetSchema([|
+      Parquet.Schema.DataField("Timestamp", typeof<Nullable<DateTime>>) :> Parquet.Schema.Field
+      Parquet.Schema.DataField("Value", typeof<Nullable<float>>) :> Parquet.Schema.Field |])
+    let fields = schema.GetDataFields()
+    do
+      use stream = File.Create path
+      use writer = global.Parquet.ParquetWriter.CreateAsync(schema, stream).GetAwaiter().GetResult()
+      use rg = writer.CreateRowGroup()
+      rg.WriteColumnAsync(Parquet.Data.DataColumn(fields.[0], Array.empty<Nullable<DateTime>>)).GetAwaiter().GetResult()
+      rg.WriteColumnAsync(Parquet.Data.DataColumn(fields.[1], Array.empty<Nullable<float>>)).GetAwaiter().GetResult()
+    // Confirm the fixture is truly empty before exercising ReadParquet.
+    do
+      use idx = new ParquetFileIndex(path)
+      idx.Length |> shouldEqual 0L
+    (fun () -> Virtual.ReadParquet(path, indexColumn = "Timestamp", columnKeys = [ "Value" ]) |> ignore)
+    |> should throw typeof<ArgumentException>
+  finally
+    GC.Collect()
+    GC.WaitForPendingFinalizers()
+    try File.Delete path with :? IOException -> ()
