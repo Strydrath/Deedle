@@ -107,7 +107,6 @@ The `Reindex` operation is particularly important for frame joins and alignment 
 it returns both a new index and a `VectorConstruction` recipe that can be applied
 to any vector with the old index to produce a vector aligned with the new index.
 
-<a name="bigdeedle"></a>
 
 ## BigDeedle
 
@@ -124,6 +123,6 @@ rewrite. User-facing workflow, LookupRange cookbook, and what materializes vs st
 [Big Deedle — virtual frames](bigdeedle.html).
 
 The `DelayedSeries` module is a simpler in-memory range loader (different mechanism) —
-see [Creating lazily loaded series](lazysource.html).
+see the [Creating lazily loaded series](lazysource.html) page.
 
 *)

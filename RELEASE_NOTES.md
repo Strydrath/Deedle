@@ -1,13 +1,11 @@
 # Release Notes
 
-## 8.1.0 - Unreleased
+## 8.1.0 - unreleased
 
 ### New operations
 
-- **`Frame.head` / `Frame.tail`**: convenience aliases for `Frame.take` / `Frame.takeLast`, returning the 
-first or last *n* rows of a frame.
-- **`Series.head` / `Series.tail`**: convenience aliases for `Series.take` / `Series.takeLast`, returning the 
-first or last *n* elements of a series.
+- **`Frame.head` / `Frame.tail`**: convenience aliases for `Frame.take` / `Frame.takeLast`, returning the first or last *n* rows of a frame.
+- **`Series.head` / `Series.tail`**: convenience aliases for `Series.take` / `Series.takeLast`, returning the first or last *n* elements of a series.
 - **`Virtual.ReadCsv`**: file-backed virtual `Frame`; ordinal `0..N-1` or `indexColumn` when strictly increasing and unique (else ordinal + trace). Missing cells, quoted fields, `hasHeaders=false`. Byte-offset row index by default (`byteOffsetIndex=false` caches lines in RAM).
 - **`Virtual.ReadCsvDirectory`**: concatenate same-schema CSVs into one ordinal virtual frame.
 - **`Virtual.ReadParquet`** (`Deedle.Parquet`): file-backed virtual frame; columns read on demand; CLR types match `Frame.readParquet`.
