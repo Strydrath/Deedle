@@ -51,7 +51,8 @@ let private parseRow (lineIndex: CsvLineIndex) row =
   Nullable(Int64.Parse(parts.[0], CultureInfo.InvariantCulture)),
   Nullable(dto.UtcDateTime),
   parts.[2],
-  Nullable(Double.Parse(parts.[3], CultureInfo.InvariantCulture))
+  parts.[3],
+  Nullable(Double.Parse(parts.[4], CultureInfo.InvariantCulture))
 
 let private writeTypedSearchParquet (parquetPath: string) (csvPath: string) =
   // Stream CSV fields into typed Parquet columns (schema CLR types drive Virtual.ReadParquet).
@@ -63,12 +64,14 @@ let private writeTypedSearchParquet (parquetPath: string) (csvPath: string) =
     DataField("Id", typeof<Nullable<int64>>) :> Field
     DataField("Timestamp", typeof<Nullable<DateTime>>) :> Field
     DataField("Category", typeof<string>) :> Field
+    DataField("Label", typeof<string>) :> Field
     DataField("Value", typeof<Nullable<float>>) :> Field |])
   let dataFields = schema.GetDataFields()
-  let ids = rows |> Array.map (fun (id, _, _, _) -> id)
-  let timestamps = rows |> Array.map (fun (_, timestamp, _, _) -> timestamp)
-  let categories = rows |> Array.map (fun (_, _, category, _) -> category)
-  let values = rows |> Array.map (fun (_, _, _, value) -> value)
+  let ids = rows |> Array.map (fun (id, _, _, _, _) -> id)
+  let timestamps = rows |> Array.map (fun (_, timestamp, _, _, _) -> timestamp)
+  let categories = rows |> Array.map (fun (_, _, category, _, _) -> category)
+  let labels = rows |> Array.map (fun (_, _, _, label, _) -> label)
+  let values = rows |> Array.map (fun (_, _, _, _, value) -> value)
   if File.Exists parquetPath then File.Delete parquetPath
   use stream = File.Create parquetPath
   use writer = global.Parquet.ParquetWriter.CreateAsync(schema, stream).GetAwaiter().GetResult()
@@ -76,7 +79,8 @@ let private writeTypedSearchParquet (parquetPath: string) (csvPath: string) =
   rg.WriteColumnAsync(DataColumn(dataFields.[0], ids)).GetAwaiter().GetResult()
   rg.WriteColumnAsync(DataColumn(dataFields.[1], timestamps)).GetAwaiter().GetResult()
   rg.WriteColumnAsync(DataColumn(dataFields.[2], categories)).GetAwaiter().GetResult()
-  rg.WriteColumnAsync(DataColumn(dataFields.[3], values)).GetAwaiter().GetResult()
+  rg.WriteColumnAsync(DataColumn(dataFields.[3], labels)).GetAwaiter().GetResult()
+  rg.WriteColumnAsync(DataColumn(dataFields.[4], values)).GetAwaiter().GetResult()
 
 let ensureSearchParquet (parquetPath: string) (rowCount: int64) =
   let csvPath = Path.ChangeExtension(parquetPath, ".csv")

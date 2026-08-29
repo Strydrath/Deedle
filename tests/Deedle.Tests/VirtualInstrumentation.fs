@@ -188,6 +188,11 @@ type InstrumentedOrdinalSource<'T>
   let lookupRangeMode = defaultArg lookupRange LookupRangeUnsupported
   let addressing = Indices.Linear.LinearAddressOperations(0L, length - 1L) :> IAddressOperations
 
+  let valueAtLoc (loc: IVectorLocation) =
+    let i = Address.asInt64 loc.Address
+    counters.RecordValueAt(i)
+    OptionalValue(valueAt i)
+
   member x.Counters = counters
   member x.Length = length
 
@@ -219,7 +224,11 @@ type InstrumentedOrdinalSource<'T>
 
     member x.LookupRange(v) =
       counters.LookupRangeCount <- counters.LookupRangeCount + 1
-      LookupRangeExecutor.lookupRange length lookupRangeMode v "InstrumentedOrdinalSource"
+      match lookupRangeMode with
+      | LookupRangeUnsupported ->
+          VirtualVectorSource.scanLookupRange addressing valueAtLoc v
+      | mode ->
+          LookupRangeExecutor.lookupRange length mode v "InstrumentedOrdinalSource"
 
     member x.LookupValue(k, l, check) =
       counters.LookupValueCount <- counters.LookupValueCount + 1
@@ -375,4 +384,33 @@ module InstrumentedOrdinalSource =
         (length, (fun i -> words.[int (i % int64 words.Length)]), c, lookupRange=VirtualLookupRangeTest.repeatingCycle words, hasMissing=false)
     let frame = Virtual.CreateOrdinalFrame(["S1"; "S2"], [s1 :> IVirtualVectorSource; s2 :> IVirtualVectorSource])
     c, frame, words
+
+  /// Ordered search frame plus float and string columns without LookupRange (scan fallback on filter).
+  let createOrderedSearchWithScanColumnsFrame (length: int64) =
+    let words = "lorem ipsum dolor sit amet consectetur adipiscing elit".Split(' ')
+    let labels = "alpha beta gamma delta".Split(' ')
+    let c = AccessCounters()
+    let start = DateTimeOffset(DateTime(2000, 1, 1), TimeSpan.FromHours(-1.0))
+    let idx =
+      InstrumentedOrdinalSource<DateTimeOffset>
+        (length, (fun i -> start.AddTicks(i * 123456789L)), c, asLong=(fun dto -> dto.UtcTicks), hasMissing=false)
+    let s1 = InstrumentedOrdinalSource<int64>(length, id, c, asLong=id, hasMissing=false)
+    let s2 =
+      InstrumentedOrdinalSource<string>
+        (length, (fun i -> words.[int (i % int64 words.Length)]), c, lookupRange=VirtualLookupRangeTest.repeatingCycle words, hasMissing=false)
+    let s3 = InstrumentedOrdinalSource<float>(length, (fun i -> float i * 0.01), c, hasMissing=false)
+    let s4 =
+      InstrumentedOrdinalSource<string>
+        (length, (fun i -> labels.[int (i % int64 labels.Length)]), c, hasMissing=false)
+    let frame =
+      Virtual.CreateFrame(
+        idx,
+        [ "S1"; "S2"; "S3"; "S4" ],
+        [ s1 :> IVirtualVectorSource; s2 :> IVirtualVectorSource; s3 :> IVirtualVectorSource; s4 :> IVirtualVectorSource ])
+    c, frame, words, 500.0, "alpha"
+
+  /// Back-compat alias for benchmarks that only need the float scan column.
+  let createOrderedSearchWithFloatFrame (length: int64) =
+    let c, frame, words, floatFilter, _ = createOrderedSearchWithScanColumnsFrame length
+    c, frame, words, floatFilter
 

@@ -11,12 +11,12 @@ open Parquet.Schema
 /// Options for [`Virtual.ReadParquet`].
 type VirtualReadParquetOptions =
   { IndexColumn: string option
-    SearchColumn: (string * LookupRangeMode<string>) option
+    SearchColumns: VirtualSearchColumn list
     ColumnKeys: string list option }
 
   static member Default =
     { IndexColumn = None
-      SearchColumn = None
+      SearchColumns = []
       ColumnKeys = None }
 
 open Deedle.Parquet
@@ -125,59 +125,64 @@ module internal ParquetColumnSource =
       (index: ParquetFileIndex)
       (data: OptionalValue<'T>[])
       (asLong: ('T -> int64) option)
-      (lookupRange: LookupRangeMode<'T>) =
+      (lookupRange: LookupRangeMode<'T>)
+      (searchColumnConfigured: bool) =
     OrdinalVirtualSource(
       index.Length,
       (fun row ->
         GC.KeepAlive(index)
         data.[int row]),
       "parquet-file",
-      ?asLong=asLong, lookupRange=lookupRange)
+      ?asLong=asLong,
+      lookupRange=lookupRange,
+      searchColumnConfigured=searchColumnConfigured)
     :> IVirtualVectorSource
 
-  let private typed<'T> (index: ParquetFileIndex) (name: string) (asLong: ('T -> int64) option) (lookupRange: LookupRangeMode<'T>) =
-    optionalSource index (index.ReadTypedColumn<'T>(name)) asLong lookupRange
+  let private typedResolved<'T> (index: ParquetFileIndex) (name: string) (asLong: ('T -> int64) option) (resolved: ResolvedColumnSearch) (pick: ResolvedColumnSearch -> LookupRangeMode<'T> option) =
+    optionalSource index (index.ReadTypedColumn<'T>(name)) asLong (defaultArg (pick resolved) LookupRangeUnsupported) resolved.Configured
 
-  let createFloat (index: ParquetFileIndex) (name: string) (lookupRange: LookupRangeMode<float> option) =
-    typed<float> index name None (defaultArg lookupRange LookupRangeUnsupported)
+  let private typedPlain<'T> (index: ParquetFileIndex) (name: string) (asLong: ('T -> int64) option) (mode: LookupRangeMode<'T>) =
+    optionalSource index (index.ReadTypedColumn<'T>(name)) asLong mode false
+
+  let createFloat (index: ParquetFileIndex) (name: string) (resolved: ResolvedColumnSearch) =
+    typedResolved<float> index name None resolved (fun r -> r.Float)
 
   let createFloat32 (index: ParquetFileIndex) (name: string) =
-    typed<float32> index name None LookupRangeUnsupported
+    typedPlain<float32> index name None LookupRangeUnsupported
 
   let createInt (index: ParquetFileIndex) (name: string) =
-    typed<int> index name (Some int64) LookupRangeUnsupported
+    typedPlain<int> index name (Some int64) LookupRangeUnsupported
 
-  let createInt64 (index: ParquetFileIndex) (name: string) (lookupRange: LookupRangeMode<int64> option) =
-    typed<int64> index name (Some id) (defaultArg lookupRange LookupRangeUnsupported)
+  let createInt64 (index: ParquetFileIndex) (name: string) (resolved: ResolvedColumnSearch) =
+    typedResolved<int64> index name (Some id) resolved (fun r -> r.Int64)
 
   let createInt16 (index: ParquetFileIndex) (name: string) =
-    typed<int16> index name (Some int64) LookupRangeUnsupported
+    typedPlain<int16> index name (Some int64) LookupRangeUnsupported
 
   let createByte (index: ParquetFileIndex) (name: string) =
-    typed<byte> index name (Some int64) LookupRangeUnsupported
+    typedPlain<byte> index name (Some int64) LookupRangeUnsupported
 
   let createUInt16 (index: ParquetFileIndex) (name: string) =
-    typed<uint16> index name (Some int64) LookupRangeUnsupported
+    typedPlain<uint16> index name (Some int64) LookupRangeUnsupported
 
   let createUInt32 (index: ParquetFileIndex) (name: string) =
-    typed<uint32> index name (Some int64) LookupRangeUnsupported
+    typedPlain<uint32> index name (Some int64) LookupRangeUnsupported
 
   let createUInt64 (index: ParquetFileIndex) (name: string) =
     // Full uint64 range does not fit int64; LookupValue is unsupported for this column.
-    typed<uint64> index name None LookupRangeUnsupported
+    typedPlain<uint64> index name None LookupRangeUnsupported
 
   let createBool (index: ParquetFileIndex) (name: string) =
-    typed<bool> index name None LookupRangeUnsupported
+    typedPlain<bool> index name None LookupRangeUnsupported
 
-  let createString (index: ParquetFileIndex) (name: string) (lookupRange: LookupRangeMode<string> option) =
-    typed<string> index name None (defaultArg lookupRange LookupRangeUnsupported)
+  let createString (index: ParquetFileIndex) (name: string) (resolved: ResolvedColumnSearch) =
+    typedResolved<string> index name None resolved (fun r -> r.String)
 
   let createDateTime (index: ParquetFileIndex) (name: string) =
-    typed<DateTime> index name (Some (fun (dt: DateTime) -> DateTimeOffset(dt).UtcTicks)) LookupRangeUnsupported
+    typedPlain<DateTime> index name (Some (fun (dt: DateTime) -> DateTimeOffset(dt).UtcTicks)) LookupRangeUnsupported
 
   let createDateTimeOffset (index: ParquetFileIndex) (name: string) =
-    let data = index.ReadDateTimeOffsetColumn name
-    optionalSource index data (Some (fun dto -> dto.UtcTicks)) LookupRangeUnsupported
+    optionalSource index (index.ReadDateTimeOffsetColumn name) (Some (fun dto -> dto.UtcTicks)) LookupRangeUnsupported false
 
   let resolveIndexColumn (fields: DataField[]) (options: VirtualReadParquetOptions) =
     match options.IndexColumn with
@@ -221,19 +226,26 @@ module internal ParquetColumnSource =
 module VirtualParquetSource =
   open ParquetColumnSource
 
-  let private createTypedColumn (index: ParquetFileIndex) (name: string) (kind: ParquetColumnKind) (lookupRange: LookupRangeMode<string> option) =
+  let private parquetKindName kind =
     match kind with
-    | ParquetColumnKind.Float -> createFloat index name None
+    | ParquetColumnKind.String -> "string"
+    | ParquetColumnKind.Int64 -> "int64"
+    | ParquetColumnKind.Float | ParquetColumnKind.Float32 -> "float"
+    | _ -> "other"
+
+  let private createTypedColumn (index: ParquetFileIndex) (name: string) (kind: ParquetColumnKind) (resolved: ResolvedColumnSearch) =
+    match kind with
+    | ParquetColumnKind.Float -> createFloat index name resolved
     | ParquetColumnKind.Float32 -> createFloat32 index name
     | ParquetColumnKind.Int -> createInt index name
-    | ParquetColumnKind.Int64 -> createInt64 index name None
+    | ParquetColumnKind.Int64 -> createInt64 index name resolved
     | ParquetColumnKind.Int16 -> createInt16 index name
     | ParquetColumnKind.Byte -> createByte index name
     | ParquetColumnKind.UInt16 -> createUInt16 index name
     | ParquetColumnKind.UInt32 -> createUInt32 index name
     | ParquetColumnKind.UInt64 -> createUInt64 index name
     | ParquetColumnKind.Bool -> createBool index name
-    | ParquetColumnKind.String -> createString index name lookupRange
+    | ParquetColumnKind.String -> createString index name resolved
     | ParquetColumnKind.DateTime -> createDateTime index name
     | ParquetColumnKind.DateTimeOffset -> createDateTimeOffset index name
 
@@ -256,12 +268,13 @@ module VirtualParquetSource =
       match options.ColumnKeys with
       | Some ks -> ks
       | None -> valueColumnNames |> List.map snd
-    let lookupForColumn (name: string) (kind: ParquetColumnKind) =
-      VirtualLookupRange.resolveSearchColumnLookupRange
+    let resolveSearchForColumn (name: string) (kind: ParquetColumnKind) =
+      let kindName = parquetKindName kind
+      VirtualLookupRange.resolveSearchColumnsLookupRange
         "Deedle.Virtual.ReadParquet"
-        options.SearchColumn
+        options.SearchColumns
         name
-        (kind = ParquetColumnKind.String)
+        kindName
         (fun () ->
           let data = fileIndex.ReadTypedColumn<string>(name)
           let valueAt row =
@@ -269,12 +282,24 @@ module VirtualParquetSource =
             | OptionalValue.Present value -> value
             | _ -> ""
           VirtualLookupRange.tryInferStringLookupRange fileIndex.Length valueAt)
+        (fun () ->
+          let data = fileIndex.ReadTypedColumn<int64>(name)
+          VirtualLookupRange.tryInferInt64LookupRange fileIndex.Length (fun row ->
+            match data.[int row] with
+            | OptionalValue.Present value -> Some value
+            | _ -> None))
+        (fun () ->
+          let data = fileIndex.ReadTypedColumn<float>(name)
+          VirtualLookupRange.tryInferFloatLookupRange fileIndex.Length (fun row ->
+            match data.[int row] with
+            | OptionalValue.Present value -> Some value
+            | _ -> None))
     let sources =
       keys
       |> List.map (fun name ->
           let colIdx = fileIndex.FieldIndex name
           let kind = columnKind fields.[colIdx]
-          createTypedColumn fileIndex name kind (lookupForColumn name kind))
+          createTypedColumn fileIndex name kind (resolveSearchForColumn name kind))
     Virtual.CreateFrame(indexSource, keys, sources)
 
 [<AutoOpen>]
@@ -284,13 +309,9 @@ module VirtualParquetExtensions =
     /// Requested columns are read into memory and cached; the underlying file handle
     /// stays reachable for the lifetime of the returned frame.
     /// Column CLR types match [`Frame.readParquet`] / `Implementation.readColumn`.
-    static member ReadParquet(path: string, ?indexColumn: string, ?searchColumn: string, ?searchLookupRange: LookupRangeMode<string>, ?columnKeys: string list) =
-      let searchCol =
-        match searchColumn with
-        | None -> None
-        | Some name -> Some(name, defaultArg searchLookupRange LookupRangeUnsupported)
+    static member ReadParquet(path: string, ?indexColumn: string, ?searchColumns: VirtualSearchColumn list, ?columnKeys: string list) =
       let options : VirtualReadParquetOptions =
         { IndexColumn = indexColumn
-          SearchColumn = searchCol
+          SearchColumns = defaultArg searchColumns []
           ColumnKeys = columnKeys }
       VirtualParquetSource.createFrame path options

@@ -1,9 +1,14 @@
 namespace Deedle.Benchmarks
 
 open System
+open System.IO
 open BenchmarkDotNet.Attributes
 open Deedle
+open Deedle.TestData
 open Deedle.Virtual
+open Deedle.Virtual.Sources
+open Deedle.Parquet
+open Deedle.Parquet.Virtual.Sources
 open Deedle.Vectors.Virtual
 open Deedle.Tests.VirtualInstrumentation
 
@@ -16,6 +21,9 @@ type VirtualBenchmarks() =
     let n = 100_000L
     let readKeys = 50
     let words = "lorem ipsum dolor sit amet consectetur adipiscing elit".Split(' ')
+    let dataDir = Path.Combine(__SOURCE_DIRECTORY__, "data")
+    let csvPath = Path.Combine(dataDir, CsvTestData.defaultDatasetName)
+    let parquetPath = Path.Combine(dataDir, ParquetTestData.defaultDatasetName)
 
     let mutable orderedFrame : Frame<DateTimeOffset, string> = Unchecked.defaultof<_>
     let mutable orderedExactFixedFrame : Frame<DateTimeOffset, string> = Unchecked.defaultof<_>
@@ -29,7 +37,16 @@ type VirtualBenchmarks() =
     let mutable missingSeries : Series<int64, float> = Unchecked.defaultof<_>
     let mutable joinLeft : Frame<int64, string> = Unchecked.defaultof<_>
     let mutable joinRight : Frame<int64, string> = Unchecked.defaultof<_>
+    let mutable scanColumnsFrame : Frame<DateTimeOffset, string> = Unchecked.defaultof<_>
+    let mutable counters = Unchecked.defaultof<AccessCounters>
     let mutable searchValue = "lorem"
+    let mutable scanFilterValue = 500.0
+    let mutable scanLabelValue = "alpha"
+    let mutable csvLineIndex : CsvLineIndex = Unchecked.defaultof<_>
+    let mutable csvFrame : Frame<DateTimeOffset, string> = Unchecked.defaultof<_>
+    let mutable parquetFrame : Frame<DateTimeOffset, string> = Unchecked.defaultof<_>
+    let mutable csvValueFilter = 0.0
+    let mutable csvLabelFilter = ""
 
     [<GlobalSetup>]
     member _.Setup() =
@@ -76,6 +93,36 @@ type VirtualBenchmarks() =
         joinLeft <- Virtual.CreateOrdinalFrame(["A"], [leftCol :> IVirtualVectorSource])
         joinRight <- Virtual.CreateOrdinalFrame(["B"], [rightCol :> IVirtualVectorSource])
 
+        let c, swf, _, floatFilter, labelFilter = InstrumentedOrdinalSource.createOrderedSearchWithScanColumnsFrame n
+        counters <- c
+        scanColumnsFrame <- swf
+        scanFilterValue <- floatFilter
+        scanLabelValue <- labelFilter
+
+        if not (Directory.Exists dataDir) then Directory.CreateDirectory dataDir |> ignore
+        CsvTestData.ensureSearchCsv csvPath n |> ignore
+        ParquetTestData.ensureSearchParquet parquetPath n |> ignore
+        csvLineIndex <- CsvLineIndex(csvPath)
+        let materialized = Frame.ReadCsv(csvPath, hasHeaders = true)
+        csvValueFilter <- materialized.GetColumn<float>("Value").GetAt(0)
+        csvLabelFilter <- materialized.GetColumn<string>("Label").GetAt(0)
+        csvFrame <-
+            Virtual.ReadCsv<DateTimeOffset>(
+                csvPath,
+                indexColumn = "Timestamp",
+                searchColumns =
+                  [ VirtualSearchColumn.infer "Category"
+                    VirtualSearchColumn.infer "Label" ],
+                columnKeys = [ "Id"; "Category"; "Label"; "Value" ])
+        parquetFrame <-
+            Virtual.ReadParquet(
+                parquetPath,
+                indexColumn = "Timestamp",
+                searchColumns =
+                  [ VirtualSearchColumn.infer "Category"
+                    VirtualSearchColumn.infer "Label" ],
+                columnKeys = [ "Id"; "Category"; "Label"; "Value" ])
+
     // --- Filter (LookupRange profiles) ----------------------------------------------------------
 
     /// Ordered index + Step LookupRange — virtual filter, no full scan.
@@ -113,6 +160,78 @@ type VirtualBenchmarks() =
     member _.FilterRowsBy_MappedColumn_Scan() =
         let searchUpper = searchValue.ToUpperInvariant()
         mappedSearchFrame |> Frame.filterRowsBy "S2" searchUpper |> ignore
+
+    /// Filter on a float column without LookupRange (scan fallback) — same frame as OrderedStep baseline.
+    [<Benchmark>]
+    member _.FilterRowsBy_NonSearchFloat_Scan() =
+        scanColumnsFrame |> Frame.filterRowsBy "S3" scanFilterValue |> ignore
+
+    /// Filter on a string column without LookupRange (scan fallback).
+    [<Benchmark>]
+    member _.FilterRowsBy_NonSearchString_Scan() =
+        scanColumnsFrame |> Frame.filterRowsBy "S4" scanLabelValue |> ignore
+
+    /// Search column (`S2`) with Step LookupRange — ValueAt count should stay near zero.
+    [<Benchmark>]
+    member _.Synthetic_ValueAtCount_SearchColumn() =
+        counters.Reset()
+        scanColumnsFrame |> Frame.filterRowsBy "S2" searchValue |> ignore
+        counters.ValueAtCount
+
+    /// Non-search float column (`S3`) — scan fallback reads every row.
+    [<Benchmark>]
+    member _.Synthetic_ValueAtCount_NonSearchFloat() =
+        counters.Reset()
+        scanColumnsFrame |> Frame.filterRowsBy "S3" scanFilterValue |> ignore
+        counters.ValueAtCount
+
+    /// Non-search string column (`S4`) — scan fallback reads every row.
+    [<Benchmark>]
+    member _.Synthetic_ValueAtCount_NonSearchString() =
+        counters.Reset()
+        scanColumnsFrame |> Frame.filterRowsBy "S4" scanLabelValue |> ignore
+        counters.ValueAtCount
+
+    /// Category filter on configured search column — LookupRange only, no CSV row decode.
+    [<Benchmark>]
+    member _.Csv_RowDecodeCount_SearchColumn() =
+        csvLineIndex.ResetSplitCount()
+        csvFrame |> Frame.filterRowsBy "Category" searchValue |> ignore
+        csvLineIndex.SplitCount
+
+    /// Value filter on column without LookupRange — one CSV row decode per compared row.
+    [<Benchmark>]
+    member _.Csv_RowDecodeCount_NonSearchFloat() =
+        csvLineIndex.ResetSplitCount()
+        csvFrame |> Frame.filterRowsBy "Value" csvValueFilter |> ignore
+        csvLineIndex.SplitCount
+
+    /// Label filter on configured search column — LookupRange only, no CSV row decode.
+    [<Benchmark>]
+    member _.Csv_RowDecodeCount_SearchLabel() =
+        csvLineIndex.ResetSplitCount()
+        csvFrame |> Frame.filterRowsBy "Label" csvLabelFilter |> ignore
+        csvLineIndex.SplitCount
+
+    /// File-backed CSV: non-search float column scan.
+    [<Benchmark>]
+    member _.Csv_FilterRowsBy_Value_Scan() =
+        csvFrame |> Frame.filterRowsBy "Value" csvValueFilter |> ignore
+
+    /// File-backed CSV: configured search column (Label).
+    [<Benchmark>]
+    member _.Csv_FilterRowsBy_Label() =
+        csvFrame |> Frame.filterRowsBy "Label" csvLabelFilter |> ignore
+
+    /// File-backed Parquet: non-search float column scan.
+    [<Benchmark>]
+    member _.Parquet_FilterRowsBy_Value_Scan() =
+        parquetFrame |> Frame.filterRowsBy "Value" csvValueFilter |> ignore
+
+    /// File-backed Parquet: configured search column (Label).
+    [<Benchmark>]
+    member _.Parquet_FilterRowsBy_Label() =
+        parquetFrame |> Frame.filterRowsBy "Label" csvLabelFilter |> ignore
 
     /// Filter then read first N rows (end-to-end slice of result).
     [<Benchmark>]

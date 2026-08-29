@@ -152,6 +152,24 @@ module private Report =
         fromDelta "filterRowsBy (ordinal + LookupRange)" (shapeOfFrame filtered) d nMed
           "B14 ordinal LookupRange fast path")
 
+      tryRow "filterRowsBy (non-search float, scan)" (fun () ->
+        let c, f, _, floatFilter, _ = InstrumentedOrdinalSource.createOrderedSearchWithScanColumnsFrame nMed
+        c.Reset()
+        let before = c.Snapshot()
+        let filtered = f |> Frame.filterRowsBy "S3" floatFilter
+        let d = AccessSnapshot.delta before (c.Snapshot())
+        fromDelta "filterRowsBy (non-search float, scan)" (shapeOfFrame filtered) d nMed
+          "Scan fallback; ValueAt ≈ length")
+
+      tryRow "filterRowsBy (non-search string, scan)" (fun () ->
+        let c, f, _, _, labelFilter = InstrumentedOrdinalSource.createOrderedSearchWithScanColumnsFrame nMed
+        c.Reset()
+        let before = c.Snapshot()
+        let filtered = f |> Frame.filterRowsBy "S4" labelFilter
+        let d = AccessSnapshot.delta before (c.Snapshot())
+        fromDelta "filterRowsBy (non-search string, scan)" (shapeOfFrame filtered) d nMed
+          "Scan fallback on second string column; ValueAt ≈ length")
+
       tryRow "sampleTimeInto (chunks)" (fun () ->
         let c, s = InstrumentedOrdinalSource.createOrderedFloatSeries nMed
         c.Reset()
