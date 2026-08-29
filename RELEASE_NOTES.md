@@ -4,43 +4,40 @@
 
 ### New operations
 
-- **`Frame.head` / `Frame.tail`**: convenience aliases for `Frame.take` / `Frame.takeLast`, returning the first or last *n* rows of a frame.
-- **`Series.head` / `Series.tail`**: convenience aliases for `Series.take` / `Series.takeLast`, returning the first or last *n* elements of a series.
-- **`Virtual.ReadCsv`**: load a CSV file as a virtual `Frame` with an ordered index column (auto-detects `Timestamp` / `DateTime` when present). Empty / `NA`-style cells become missing values; quoted fields with commas are supported.
-- **`VirtualLookupRange` helpers**: `forRepeatingCycle`, `forCategorical`, `forCategoricalScan`, and `scan` for configuring searchable string columns on virtual sources. Unknown cycle values yield an empty filter range (no throw).
-- **CSV virtual backend** (`Deedle.Virtual.Sources`): `CsvLineIndex`, `VirtualCsvSource` for file-backed Big Deedle experiments. Fixture helpers live in `tests/Common/CsvTestData.fs` (not shipped in the library).
-- **`Frame.filterRowsBy2`**: intersect two column predicates in one virtual `LookupRange` / `GetSubVector` pass (falls back to sequential `filterRowsBy` on linear frames).
-- **`Virtual.MaterializeFloatBatches`**: lazily materialize selected float columns into per-batch `float[][]` feature matrices from a virtual frame. Missing cells map to `NaN` by default, or a caller-supplied `FloatMissingPolicy.Value`.
-- **`Virtual.ReadCsvDirectory`**: load a folder of same-schema CSVs as one ordinal virtual frame (`OrdinalVirtualSource` concat).
-- **CSV byte-offset index**: `CsvLineIndex(..., byteOffset=true)` and `Virtual.ReadCsv(..., byteOffsetIndex=true)` seek to physical line starts instead of caching every line string.
-- **Virtual `Series.shift` / `Series.diff` / `Series.pctChange`**: stay on the virtual addressing scheme (no full materialize). `Frame.shift` / `Frame.diff` / `Frame.pctChange` use the frame's vector builder so virtual columns stay virtual.
-- **Virtual fixed windows**: `Series.windowSize` / `chunkSize` build nested window series via `GetAddressRange` (virtual slices). Aggregating those windows still materializes the result series of scalars.
-- **Virtual ordinal Join / Zip** of identical key ranges (and inner zip of overlapping single-block ordinal slices) keep a virtual row index. Mismatched keys, `joinOn`, and nearest-key lookup still materialize.
-- **Virtual `Series.dropMissing`**: one presence scan, then a virtual sub-vector. `Series.sortByKey` is a no-op on already-ordered virtual series. `Series.sortBy` / `groupBy` / full-series Stats / `Series.intersect` (key+value) remain documented materialize.
+- **`Frame.head` / `Frame.tail`**: convenience aliases for `Frame.take` / `Frame.takeLast`, returning the 
+first or last *n* rows of a frame.
+- **`Series.head` / `Series.tail`**: convenience aliases for `Series.take` / `Series.takeLast`, returning the 
+first or last *n* elements of a series.
+- **`Virtual.ReadCsv`**: file-backed virtual `Frame`; ordinal `0..N-1` or `indexColumn` when strictly increasing and unique (else ordinal + trace). Missing cells, quoted fields, `hasHeaders=false`. Byte-offset row index by default (`byteOffsetIndex=false` caches lines in RAM).
+- **`Virtual.ReadCsvDirectory`**: concatenate same-schema CSVs into one ordinal virtual frame.
+- **`Virtual.ReadParquet`** (`Deedle.Parquet`): file-backed virtual frame; columns read on demand; CLR types match `Frame.readParquet`.
+- **`searchColumns`**: `VirtualSearchColumn.infer` / `.withString` / `.withInt64` / `.withFloat` at load; ≤64 distinct values infer `IndexList` or `Step`.
+- **`VirtualLookupRange`**: `forRepeatingCycle`, `forCategorical`, `forCategoricalScan`, `scan` (unknown cycle → empty range).
+- **`Frame.filterRowsBy`**: uses column `LookupRange` on virtual ordered/ordinal frames; O(N) scan when unconfigured; `LookupRange` remapped after Step/IndexList slices.
+- **`Frame.filterRowsBy2`**: intersect two predicates in one `LookupRange` / `GetSubVector` pass.
+- **`Virtual.MaterializeFloatBatches`**: lazy `float64` `FeaturesFlat` from `float`/`int64` columns; `labelsColumn`, `layout`, `includeMissingMask`, `maxRows`, `FloatBatchOrder` (`Sequential` / `Shuffled` / `ShuffledWithSeed`), `FloatMissingPolicy`.
+- **Virtual series/frame ops** (stay virtual until read): `shift`, `diff`, `pctChange`; `windowSize`/`chunkSize` nested slices (aggregate still materializes); ordinal join/zip on identical keys; `dropMissing`; `fillMissing`/`fillMissingWith` on virtual sources.
+- **`Virtual` diagnostics**: `GetRowIndexKind`, `IsVirtualRowIndex`, `IsVirtualColumn`, `Describe`, `TryGetRowIndexSchemeId`, `TryGetLookupRange` (`Scan` / `Step` / `IndexList` / `ExactFixed` / `FullFixed`).
+
 
 ### Performance
 
-- **CSV row decode cache:** `CsvLineIndex` now caches parsed fields per row, so multiple columns reading the same row only split the CSV line once. Slice-scoped parsing restricts decode work to the requested `LookupRange`.
-- **`Virtual.ReadParquet`:** new API in `Deedle.Parquet` that loads a Parquet file as a virtual `Frame`. Requested columns are cached in memory; the file handle stays reachable for the frame lifetime. Column CLR types match `Frame.readParquet` (float/float32, signed/unsigned integers, bool, string, DateTime/DateTimeOffset). Nulls map to missing values.
-- **Ordinal virtual `filterRowsBy`:** `VirtualIndexBuilder.Search` now uses the search column's **`LookupRange`** on **`VirtualOrdinalIndex`** frames (same as ordered indices), fixing accidental ~38 s / ~34 GiB linear scan at N=100k when `LookupRange` is configured. Benchmark renamed to `FilterRowsBy_OrdinalStep` (~µs + KiB).
-- **Filter without `LookupRange`:** virtual `filterRowsBy` on an unconfigured search column raises **`NotSupportedException`** with setup guidance (instead of a generic failure or full scan).
-- **`Virtual` diagnostics:** read-only helpers on `Virtual` to inspect row index kind, column virtuality, and scheme id (`GetRowIndexKind`, `IsVirtualRowIndex`, `IsVirtualColumn`, `Describe`, `TryGetRowIndexSchemeId`).
-- **`Virtual.ReadCsv` LookupRange inference:** when `searchColumn` is set without `searchLookupRange`, low-cardinality string columns (≤64 distinct values) are inferred once at load time.
-- **`Virtual.ReadParquet` LookupRange inference:** same inference as CSV for string search columns when `searchLookupRange` is omitted.
-- **`clipLookupRange`:** remaps Step/IndexList modes after Fixed slices. Step and Custom (`IndexList`) sub-vectors also remap `LookupRange` into the new local domain, so chained `filterRowsBy` on the same Step column keeps the correct row count. `filterRowsBy2` remains the one-pass fused API for two predicates.
-- **Virtual ordered slices / `Series.diff` / `Series.shift`:** ordered `GetAddressRange` / `GetRange` reindex onto linear `0..n-1` addresses so absolute-address partitioned sources align (fixes zero diffs on BigDeedle Ranges backends).
+- **CSV**: per-row parsed-field cache; decode scoped to requested `LookupRange`.
+- **Parquet**: per-column cache on virtual frames; file handle kept for frame lifetime.
+- **`filterRowsBy`**: `LookupRange` path on `VirtualOrdinalIndex` and ordered virtual indices (not full-file scan when configured).
 
-### Bug fixes
-- **Chained virtual `filterRowsBy` on Step columns:** after a Step `GetSubVector`, `LookupRange` is remapped into the sliced address domain (same-value chain keeps the row count; disjoint Step values yield empty). Custom/IndexList sub-vectors remap the same way.
-- **Virtual wrappers:** boxed / combined / mapped / row-reader sources no longer `failwith` on `LookupRange` / `LookupValue` — they delegate or scan. Partitioned `Ranges` sources accept custom LookupRange results. `Series.fillMissing` / `fillMissingWith` stay virtual. `VirtualVectorBuilder.AsyncBuild` with a virtual scheme raises `NotSupportedException` (use `Series.Materialize` / `AsyncMaterialize`).
-- **`OrdinalVirtualSource`:** mismatched `MergeWith` and `LookupValue` without `asLong` raise `InvalidOperationException` (via `invalidOp`) instead of `failwith`.
-- **`VirtualCsvSource`:** missing files/directories raise `FileNotFoundException` / `DirectoryNotFoundException`; unknown columns and schema mismatches use `invalidArg` / `invalidOp` instead of `failwith`.
-- **`StepRange`:** `Count` and enumeration raise `NotSupportedException` (instead of `failwith`).
+### Documentation
+
+- **`docs/bigdeedle.fsx`**: virtual load, filter, prep, ML export, custom `IVirtualVectorSource`; sample data in `docs/data/bigdeedle-prices.csv`.
+- **`docs/design.fsx`**, **`docs/index.fsx`**: virtual stack overview and navigation.
 
 ### Tests
 
 - Added tests for `Frame.renameCol` and `Frame.renameColsUsing`.
 - Added tests for `Frame.head` / `Frame.tail` and `Series.head` / `Series.tail`.
+- Added tests for Virtual CSV/Parquet, lookup range, frame diagnostics, series/vector/index.
+- Added Benchmarks for Virtual operations.
+- Added **`Deedle.VirtualPreservation`**: per-op virtual vs materialize checks (counting ValueAt ops).
 
 ## 8.0.0 - 2026-05-09
 

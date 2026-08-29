@@ -59,8 +59,9 @@ let ``Can infer Step LookupRange on Parquet Category column`` () =
     Virtual.ReadParquet(
       SearchDataset.parquetPath,
       indexColumn = "Timestamp",
-      searchColumn = "Category",
+      searchColumns = [ VirtualSearchColumn.infer "Category" ],
       columnKeys = [ "Id"; "Category" ])
+  Virtual.TryGetLookupRange(frame, "Category") |> shouldEqual (Some (VirtualColumnLookupRange.Step CsvTestData.words8.Length))
   Virtual.IsVirtualColumn(frame, "Category") |> shouldEqual true
   let filtered = frame |> Frame.filterRowsBy "Category" "lorem"
   Virtual.GetRowIndexKind filtered |> shouldEqual VirtualRowIndexKind.OrderedVirtual
@@ -68,18 +69,22 @@ let ``Can infer Step LookupRange on Parquet Category column`` () =
   FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
 
 [<Test; NonParallelizable>]
-let ``Can throw when ReadParquet search column has no LookupRange`` () =
+let ``ReadParquet can filterRowsBy on non-search columns via scan fallback`` () =
   SearchDataset.ensureParquet()
   let frame =
     Virtual.ReadParquet(
       SearchDataset.parquetPath,
       indexColumn = "Timestamp",
       columnKeys = [ "Id"; "Category" ])
-  (fun () -> frame |> Frame.filterRowsBy "Category" "lorem" |> ignore)
-  |> should throw typeof<NotSupportedException>
+  let materialized = Frame.readParquet SearchDataset.parquetPath
+  let sample = materialized.GetColumn<string>("Category").GetAt(0)
+  let expected = materialized |> Frame.filterRowsBy "Category" sample
+  let filtered = frame |> Frame.filterRowsBy "Category" sample
+  Virtual.IsVirtualRowIndex filtered |> shouldEqual true
+  filtered.RowCount |> shouldEqual expected.RowCount
 
 [<Test>]
-let ``Can throw when ReadParquet high-cardinality search needs explicit LookupRange`` () =
+let ``ReadParquet can filterRowsBy on high-cardinality search column via scan fallback`` () =
   let path = Path.Combine(Path.GetTempPath(), sprintf "deedle-parquet-hicard-%d.parquet" Environment.TickCount)
   try
     let n = 100
@@ -96,9 +101,11 @@ let ``Can throw when ReadParquet high-cardinality search needs explicit LookupRa
       use rg = writer.CreateRowGroup()
       rg.WriteColumnAsync(Parquet.Data.DataColumn(fields.[0], ts)).GetAwaiter().GetResult()
       rg.WriteColumnAsync(Parquet.Data.DataColumn(fields.[1], cats)).GetAwaiter().GetResult()
-    let frame = Virtual.ReadParquet(path, indexColumn = "Timestamp", searchColumn = "Category", columnKeys = [ "Category" ])
-    (fun () -> frame |> Frame.filterRowsBy "Category" cats.[0] |> ignore)
-    |> should throw typeof<NotSupportedException>
+    let frame = Virtual.ReadParquet(path, indexColumn = "Timestamp", searchColumns = [ VirtualSearchColumn.infer "Category" ], columnKeys = [ "Category" ])
+    Virtual.TryGetLookupRange(frame, "Category") |> shouldEqual (Some VirtualColumnLookupRange.Scan)
+    let filtered = frame |> Frame.filterRowsBy "Category" cats.[0]
+    Virtual.IsVirtualRowIndex filtered |> shouldEqual true
+    filtered.RowCount |> shouldEqual 1
   finally
     GC.Collect()
     GC.WaitForPendingFinalizers()
@@ -111,9 +118,9 @@ let ``Can filter ReadParquet frame with explicit LookupRange`` () =
     Virtual.ReadParquet(
       SearchDataset.parquetPath,
       indexColumn = "Timestamp",
-      searchColumn = "Category",
-      searchLookupRange = VirtualLookupRange.forRepeatingCycle CsvTestData.words8,
+      searchColumns = [ VirtualSearchColumn.withString "Category" (VirtualLookupRange.forRepeatingCycle CsvTestData.words8) ],
       columnKeys = [ "Id"; "Category" ])
+  Virtual.TryGetLookupRange(frame, "Category") |> shouldEqual (Some (VirtualColumnLookupRange.Step CsvTestData.words8.Length))
   frame.RowCount |> shouldEqual (int SearchDataset.nLarge)
   (frame |> Frame.filterRowsBy "Category" "lorem").RowCount |> shouldEqual 12_500
 
@@ -124,9 +131,9 @@ let ``Can filterRowsBy2 on ReadParquet with same count as single filter`` () =
     Virtual.ReadParquet(
       SearchDataset.parquetPath,
       indexColumn = "Timestamp",
-      searchColumn = "Category",
-      searchLookupRange = VirtualLookupRange.forRepeatingCycle CsvTestData.words8,
+      searchColumns = [ VirtualSearchColumn.withString "Category" (VirtualLookupRange.forRepeatingCycle CsvTestData.words8) ],
       columnKeys = [ "Id"; "Category" ])
+  Virtual.TryGetLookupRange(frame, "Category") |> shouldEqual (Some (VirtualColumnLookupRange.Step CsvTestData.words8.Length))
   let searchValue = "lorem"
   let single = frame |> Frame.filterRowsBy "Category" searchValue
   let fused = frame |> Frame.filterRowsBy2 "Category" searchValue "Category" searchValue

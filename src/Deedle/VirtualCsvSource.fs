@@ -112,16 +112,16 @@ module internal CsvParsing =
     | None -> invalidArg "name" (sprintf "VirtualCsvSource: column '%s' not found in header" name)
 
 /// Shared row index for one CSV file (built once, reused by column sources).
-/// Default backend caches physical line text. [`byteOffset`] stores only start offsets and seeks on read.
-type CsvLineIndex(path: string, ?skipHeader: bool, ?byteOffset: bool) =
-  let skipHeader = defaultArg skipHeader true
-  let byteOffset = defaultArg byteOffset false
+/// By default stores physical line start offsets and seeks on read. Pass [`byteOffset=false`] to cache every line string in RAM.
+type CsvLineIndex(path: string, ?hasHeaders: bool, ?byteOffset: bool) =
+  let hasHeaders = defaultArg hasHeaders true
+  let byteOffset = defaultArg byteOffset true
   let lines, offsets =
     if byteOffset then
-      [||], CsvParsing.indexPhysicalLineOffsets path skipHeader
+      [||], CsvParsing.indexPhysicalLineOffsets path hasHeaders
     else
       use reader = new StreamReader(path)
-      if skipHeader then reader.ReadLine() |> ignore
+      if hasHeaders then reader.ReadLine() |> ignore
       let acc = ResizeArray<string>()
       while not reader.EndOfStream do
         acc.Add(reader.ReadLine())
@@ -157,13 +157,37 @@ type CsvLineIndex(path: string, ?skipHeader: bool, ?byteOffset: bool) =
     | fields -> fields
 
   member _.HeaderColumns =
-    use reader = new StreamReader(path)
-    match reader.ReadLine() with
-    | null -> [||]
-    | line -> CsvParsing.splitCsvLine line |> Array.map (fun s -> s.Trim())
+    if hasHeaders then
+      use reader = new StreamReader(path)
+      match reader.ReadLine() with
+      | null -> [||]
+      | line -> CsvParsing.splitCsvLine line |> Array.map (fun s -> s.Trim())
+    elif rowCount = 0 then
+      [||]
+    else
+      let firstLine =
+        if byteOffset then CsvParsing.readPhysicalLineAt path offsets.[0]
+        else lines.[0]
+      let columnCount = CsvParsing.splitCsvLine firstLine |> Array.length
+      [| for i in 1 .. columnCount -> sprintf "Column%d" i |]
 
 module VirtualCsvSource =
   open CsvParsing
+
+  let private parseInt64Strict (s: string) =
+    Int64.Parse(s.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture)
+
+  let private parseFloatStrict (s: string) =
+    Double.Parse(s.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture)
+
+  let private parseStringStrict (s: string) =
+    let t = s.TrimEnd('\r', '\n')
+    if isMissingCell t then invalidArg "index" "VirtualCsvSource: index column value is missing"
+    t
+
+  type private VirtualCsvFrameHelper =
+    static member CreateOrdered<'T when 'T : equality>(index: IVirtualVectorSource<'T>, keys, sources) =
+      box (Virtual.CreateFrame(index, keys, sources))
 
   let private looksLikeDateTime (s: string) =
     s.IndexOf('-') >= 0 || s.IndexOf('/') >= 0 || s.IndexOf('T') >= 0
@@ -185,7 +209,7 @@ module VirtualCsvSource =
       | _ -> "string"
 
   let private createOptionalColumn (lineIndex: CsvLineIndex) columnIndex (tryParse: string -> 'T option)
-      (asLong: ('T -> int64) option) (lookupRange: LookupRangeMode<'T> option) =
+      (asLong: ('T -> int64) option) (lookupRange: LookupRangeMode<'T> option) (searchColumnConfigured: bool) =
     let valueAt row =
       let s = field (lineIndex.ReadFields row) columnIndex
       if isMissingCell s then OptionalValue.Missing
@@ -193,7 +217,13 @@ module VirtualCsvSource =
         match tryParse s with
         | Some v -> OptionalValue(v)
         | None -> OptionalValue.Missing
-    OrdinalVirtualSource(lineIndex.Length, valueAt, "csv-file", ?asLong=asLong, ?lookupRange=lookupRange) :> IVirtualVectorSource
+    match lookupRange with
+    | Some mode ->
+        OrdinalVirtualSource(lineIndex.Length, valueAt, "csv-file", ?asLong=asLong, lookupRange=mode, searchColumnConfigured=searchColumnConfigured)
+        :> IVirtualVectorSource
+    | None ->
+        OrdinalVirtualSource(lineIndex.Length, valueAt, "csv-file", ?asLong=asLong, searchColumnConfigured=searchColumnConfigured)
+        :> IVirtualVectorSource
 
   /// Index columns stay strict: empty/invalid index cells throw (row keys must be present).
   let private createStrictColumn (lineIndex: CsvLineIndex) columnIndex (parse: string -> 'T)
@@ -208,80 +238,188 @@ module VirtualCsvSource =
       let s = field (lineIndex.ReadFields row) columnIndex
       if isMissingCell s then "" else s.Trim()
 
-  let private resolveSearchLookupRange (lineIndex: CsvLineIndex) (_header: string[]) (colIdx: int) (name: string) (kind: string) (options: VirtualReadCsvOptions) =
-    VirtualLookupRange.resolveSearchColumnLookupRange
-      "Deedle.Virtual.ReadCsv"
-      options.SearchColumn
-      name
-      (kind = "string")
-      (fun () -> VirtualLookupRange.tryInferStringLookupRange lineIndex.Length (stringValueAt lineIndex colIdx))
+  let private optionalInt64At (lineIndex: CsvLineIndex) (columnIndex: int) (row: int64) =
+    let s = field (lineIndex.ReadFields row) columnIndex
+    if isMissingCell s then None else tryParseInt64 s
 
-  let private createTypedColumn (lineIndex: CsvLineIndex) (columnIndex: int) (kind: string) lookupRange =
+  let private optionalFloatAt (lineIndex: CsvLineIndex) (columnIndex: int) (row: int64) =
+    let s = field (lineIndex.ReadFields row) columnIndex
+    if isMissingCell s then None else tryParseFloat s
+
+  let private resolveSearchLookupRanges (lineIndex: CsvLineIndex) (colIdx: int) (name: string) (kind: string) (options: VirtualReadCsvOptions) =
+    VirtualLookupRange.resolveSearchColumnsLookupRange
+      "Deedle.Virtual.ReadCsv"
+      options.SearchColumns
+      name
+      kind
+      (fun () -> VirtualLookupRange.tryInferStringLookupRange lineIndex.Length (stringValueAt lineIndex colIdx))
+      (fun () -> VirtualLookupRange.tryInferInt64LookupRange lineIndex.Length (optionalInt64At lineIndex colIdx))
+      (fun () -> VirtualLookupRange.tryInferFloatLookupRange lineIndex.Length (optionalFloatAt lineIndex colIdx))
+
+  let private createTypedColumn (lineIndex: CsvLineIndex) (columnIndex: int) (kind: string) (resolved: ResolvedColumnSearch) =
+    let configured = resolved.Configured
     match kind with
     | "datetime" ->
-      createOptionalColumn lineIndex columnIndex tryParseDateTime (Some (fun dto -> dto.UtcTicks)) None
+      createOptionalColumn lineIndex columnIndex tryParseDateTime (Some (fun dto -> dto.UtcTicks)) None false
     | "int64" ->
-      createOptionalColumn lineIndex columnIndex tryParseInt64 (Some id) None
+      createOptionalColumn lineIndex columnIndex tryParseInt64 (Some id) resolved.Int64 configured
     | "float" ->
-      createOptionalColumn lineIndex columnIndex tryParseFloat None None
+      createOptionalColumn lineIndex columnIndex tryParseFloat None resolved.Float configured
     | _ ->
-      createOptionalColumn lineIndex columnIndex (fun s -> Some s) None lookupRange
+      createOptionalColumn lineIndex columnIndex (fun s -> Some s) None resolved.String configured
 
-  let resolveIndexColumn (header: string[]) (options: VirtualReadCsvOptions) =
-    match options.IndexColumn with
-    | Some name -> columnIndex header name
+  let private warnOrdinalIndex (apiName: string) (columnName: string) (reason: string) =
+    System.Diagnostics.Trace.TraceWarning(
+      sprintf "%s: column '%s' %s; using ordinal row index 0..N-1 instead." apiName columnName reason)
+
+  /// Strict ascending and unique in file row order (O(N) scan at load).
+  let private isOrderedUniqueIndex (lineIndex: CsvLineIndex) (columnIndex: int) (kind: string) =
+    if lineIndex.Length <= 1L then true
+    else
+      let mutable ok = true
+      let mutable prevInt = 0L
+      let mutable prevDt = DateTimeOffset.MinValue
+      let mutable prevFl = 0.0
+      let mutable prevStr = ""
+      let mutable hasPrev = false
+      for row in 0L .. lineIndex.Length - 1L do
+        if not ok then ()
+        else
+          let s = field (lineIndex.ReadFields row) columnIndex
+          if isMissingCell s then ok <- false
+          else
+            match kind with
+            | "int64" ->
+                match tryParseInt64 s with
+                | None -> ok <- false
+                | Some v ->
+                    if hasPrev && v <= prevInt then ok <- false
+                    else prevInt <- v; hasPrev <- true
+            | "datetime" ->
+                match tryParseDateTime s with
+                | None -> ok <- false
+                | Some v ->
+                    if hasPrev && v.UtcTicks <= prevDt.UtcTicks then ok <- false
+                    else prevDt <- v; hasPrev <- true
+            | "float" ->
+                match tryParseFloat s with
+                | None -> ok <- false
+                | Some v ->
+                    if hasPrev && v <= prevFl then ok <- false
+                    else prevFl <- v; hasPrev <- true
+            | _ ->
+                let v = s.TrimEnd('\r', '\n')
+                if hasPrev && String.Compare(v, prevStr, StringComparison.Ordinal) <= 0 then ok <- false
+                else prevStr <- v; hasPrev <- true
+      ok
+
+  let private createStrictIndexSource (lineIndex: CsvLineIndex) (columnIndex: int) (kind: string) =
+    match kind with
+    | "int64" ->
+      createStrictColumn lineIndex columnIndex parseInt64Strict (Some id)
+    | "datetime" ->
+      createStrictColumn lineIndex columnIndex parseDateTimeStrict (Some (fun dto -> dto.UtcTicks))
+    | "float" ->
+      createStrictColumn lineIndex columnIndex parseFloatStrict (Some BitConverter.DoubleToInt64Bits)
+    | _ ->
+      createStrictColumn lineIndex columnIndex parseStringStrict None
+
+  let private valueColumnNames (header: string[]) (indexCol: int option) (columnKeys: string list option) =
+    match columnKeys with
+    | Some ks -> ks
     | None ->
-      let preferred = header |> Array.tryFindIndex (fun h ->
-        String.Equals(h, "Timestamp", StringComparison.OrdinalIgnoreCase)
-        || String.Equals(h, "DateTime", StringComparison.OrdinalIgnoreCase)
-        || h.EndsWith("Time", StringComparison.OrdinalIgnoreCase))
-      match preferred with
-      | Some i -> i
-      | None -> 0
+        header
+        |> Array.mapi (fun i name -> i, name)
+        |> Array.filter (fun (i, _) -> match indexCol with None -> true | Some idx -> i <> idx)
+        |> Array.map snd
+        |> Array.toList
 
-  /// Build a virtual frame from an indexed CSV file.
+  let private columnSources (lineIndex: CsvLineIndex) (header: string[]) (keys: string list) (options: VirtualReadCsvOptions) =
+    keys
+    |> List.map (fun name ->
+        let colIdx = columnIndex header name
+        let kind = inferColumnKind lineIndex colIdx 100
+        let resolved = resolveSearchLookupRanges lineIndex colIdx name kind options
+        createTypedColumn lineIndex colIdx kind resolved)
+
+  let private resolveHeader (lineIndex: CsvLineIndex) (options: VirtualReadCsvOptions) =
+    let header = lineIndex.HeaderColumns
+    if options.HasHeaders && header.Length = 0 then
+      invalidArg "csvPath" "CSV has no header row"
+    header
+
+  let private createOrdinalFrameFromLineIndex (lineIndex: CsvLineIndex) (options: VirtualReadCsvOptions) =
+    let header = resolveHeader lineIndex options
+    let keys = valueColumnNames header None options.ColumnKeys
+    let sources = columnSources lineIndex header keys options
+    Virtual.CreateOrdinalFrame(keys, sources)
+
+  let private createOrderedFrameFromLineIndex (lineIndex: CsvLineIndex) (indexCol: int) (_indexName: string) (options: VirtualReadCsvOptions) =
+    let header = resolveHeader lineIndex options
+    let kind = inferColumnKind lineIndex indexCol 100
+    let indexSource = createStrictIndexSource lineIndex indexCol kind
+    let keys = valueColumnNames header (Some indexCol) options.ColumnKeys
+    let sources = columnSources lineIndex header keys options
+    match kind with
+    | "int64" ->
+        VirtualCsvFrameHelper.CreateOrdered<int64>(indexSource :?> IVirtualVectorSource<int64>, keys, sources)
+    | "datetime" ->
+        VirtualCsvFrameHelper.CreateOrdered<DateTimeOffset>(indexSource :?> IVirtualVectorSource<DateTimeOffset>, keys, sources)
+    | "float" ->
+        VirtualCsvFrameHelper.CreateOrdered<float>(indexSource :?> IVirtualVectorSource<float>, keys, sources)
+    | _ ->
+        VirtualCsvFrameHelper.CreateOrdered<string>(indexSource :?> IVirtualVectorSource<string>, keys, sources)
+
+  /// Build a virtual frame with ordinal row index `0 .. N-1`.
+  let createOrdinalFrame (csvPath: string) (options: VirtualReadCsvOptions) =
+    if not (File.Exists csvPath) then raise (FileNotFoundException(sprintf "VirtualCsvSource: file not found '%s'" csvPath, csvPath))
+    let lineIndex = CsvLineIndex(csvPath, hasHeaders=options.HasHeaders, byteOffset=options.ByteOffsetIndex)
+    if lineIndex.Length = 0L then invalidArg "csvPath" "CSV has no data rows"
+    createOrdinalFrameFromLineIndex lineIndex options
+
+  /// Build a virtual frame from a CSV file (boxed; unbox at the API boundary).
+  /// With `IndexColumn = None`, uses ordinal rows `0 .. N-1`.
+  /// With `IndexColumn = Some name`, uses that column when strictly increasing and unique in file order; otherwise ordinal with a trace warning.
   let createFrame (csvPath: string) (options: VirtualReadCsvOptions) =
     if not (File.Exists csvPath) then raise (FileNotFoundException(sprintf "VirtualCsvSource: file not found '%s'" csvPath, csvPath))
-    let lineIndex = CsvLineIndex(csvPath, byteOffset=options.ByteOffsetIndex)
+    let lineIndex = CsvLineIndex(csvPath, hasHeaders=options.HasHeaders, byteOffset=options.ByteOffsetIndex)
     if lineIndex.Length = 0L then invalidArg "csvPath" "CSV has no data rows"
-    let header = lineIndex.HeaderColumns
-    if header.Length = 0 then invalidArg "csvPath" "CSV has no header row"
-    let indexCol = resolveIndexColumn header options
-    let indexSource =
-      createStrictColumn lineIndex indexCol parseDateTimeStrict (Some (fun dto -> dto.UtcTicks))
-      :?> IVirtualVectorSource<DateTimeOffset>
-    let valueColumnIndices =
-      header
-      |> Array.mapi (fun i name -> i, name)
-      |> Array.filter (fun (i, _) -> i <> indexCol)
-      |> Array.toList
-    let keys =
-      match options.ColumnKeys with
-      | Some ks -> ks
-      | None -> valueColumnIndices |> List.map snd
-    let lookupForColumn (name: string) (colIdx: int) (kind: string) =
-      resolveSearchLookupRange lineIndex header colIdx name kind options
-    let sources =
-      keys
-      |> List.map (fun name ->
-          let colIdx = columnIndex header name
-          let kind = inferColumnKind lineIndex colIdx 100
-          createTypedColumn lineIndex colIdx kind (lookupForColumn name colIdx kind))
-    Virtual.CreateFrame(indexSource, keys, sources)
+    let header = resolveHeader lineIndex options
+    let frame =
+      match options.IndexColumn with
+      | None ->
+          box (createOrdinalFrameFromLineIndex lineIndex options)
+      | Some indexName ->
+          let indexCol = columnIndex header indexName
+          let kind = inferColumnKind lineIndex indexCol 100
+          if isOrderedUniqueIndex lineIndex indexCol kind then
+            createOrderedFrameFromLineIndex lineIndex indexCol indexName options
+          else
+            warnOrdinalIndex "Deedle.Virtual.ReadCsv" indexName "is not strictly increasing and unique in file order"
+            box (createOrdinalFrameFromLineIndex lineIndex options)
+    frame
 
   let createIndexSource (lineIndex: CsvLineIndex) (columnName: string) =
     let colIdx = columnIndex lineIndex.HeaderColumns columnName
-    createStrictColumn lineIndex colIdx parseDateTimeStrict (Some (fun dto -> dto.UtcTicks))
+    let kind = inferColumnKind lineIndex colIdx 100
+    createStrictIndexSource lineIndex colIdx kind
 
   /// Create a value column source for a CSV file (type inferred from sample rows).
-  let createColumnSource (lineIndex: CsvLineIndex) (columnName: string) (lookupRange: LookupRangeMode<string> option) =
+  let createColumnSource (lineIndex: CsvLineIndex) (columnName: string) (stringLookupRange: LookupRangeMode<string> option) =
     let colIdx = columnIndex lineIndex.HeaderColumns columnName
     let kind = inferColumnKind lineIndex colIdx 100
-    createTypedColumn lineIndex colIdx kind lookupRange
+    let resolved =
+      match stringLookupRange with
+      | None -> ResolvedColumnSearch.Empty
+      | Some mode ->
+        { ResolvedColumnSearch.Empty with String = Some mode; Configured = true }
+    createTypedColumn lineIndex colIdx kind resolved
 
-  /// Resolve index column using the same rules as [`createFrame`].
+  /// Resolve the configured index column name, if any.
   let resolveIndexColumnName (header: string[]) (options: VirtualReadCsvOptions) =
-    header.[resolveIndexColumn header options]
+    match options.IndexColumn with
+    | None -> invalidArg "options" "VirtualCsvSource: no index column configured"
+    | Some name -> name
 
   /// Map a global ordinal row to (part index, row-in-part).
   let private locatePartRow (partSizes: int[]) (i: int64) =
@@ -298,10 +436,9 @@ module VirtualCsvSource =
     let indexes =
       csvPaths |> Array.map (fun p ->
         if not (File.Exists p) then raise (FileNotFoundException(sprintf "VirtualCsvSource: file not found '%s'" p, p))
-        CsvLineIndex(p, byteOffset=options.ByteOffsetIndex))
+        CsvLineIndex(p, hasHeaders=options.HasHeaders, byteOffset=options.ByteOffsetIndex))
     if indexes |> Array.exists (fun i -> i.Length = 0L) then invalidArg "csvPaths" "CSV part has no data rows"
-    let header = indexes.[0].HeaderColumns
-    if header.Length = 0 then invalidArg "csvPaths" "CSV has no header row"
+    let header = resolveHeader indexes.[0] options
     for i in 1 .. indexes.Length - 1 do
       if indexes.[i].HeaderColumns <> header then
         invalidArg "csvPaths" (sprintf "VirtualCsvSource: schema mismatch in '%s'" csvPaths.[i])
@@ -314,67 +451,69 @@ module VirtualCsvSource =
     let makeColumn name =
       let colIdx = columnIndex header name
       let kind = inferColumnKind indexes.[0] colIdx 100
-      let lookup = resolveSearchLookupRange indexes.[0] header colIdx name kind options
+      let resolved = resolveSearchLookupRanges indexes.[0] colIdx name kind options
       let cell i =
         let part, row = locatePartRow partSizes i
         field (indexes.[part].ReadFields row) colIdx
-      let sourceOf parse asLong lookupRange =
+      let sourceOf parse asLong lookupRange configured =
         let valueAt i =
           let s = cell i
           if isMissingCell s then OptionalValue.Missing
           else match parse s with Some v -> OptionalValue(v) | None -> OptionalValue.Missing
-        OrdinalVirtualSource(total, valueAt, "csv-file", ?asLong=asLong, ?lookupRange=lookupRange)
-        :> IVirtualVectorSource
+        match lookupRange with
+        | Some mode ->
+            OrdinalVirtualSource(total, valueAt, "csv-file", ?asLong=asLong, lookupRange=mode, searchColumnConfigured=configured)
+            :> IVirtualVectorSource
+        | None ->
+            OrdinalVirtualSource(total, valueAt, "csv-file", ?asLong=asLong, searchColumnConfigured=configured)
+            :> IVirtualVectorSource
       match kind with
-      | "datetime" -> sourceOf tryParseDateTime (Some (fun dto -> dto.UtcTicks)) None
-      | "int64" -> sourceOf tryParseInt64 (Some id) None
-      | "float" -> sourceOf tryParseFloat None None
-      | _ -> sourceOf (fun s -> Some s) None lookup
+      | "datetime" -> sourceOf tryParseDateTime (Some (fun dto -> dto.UtcTicks)) None false
+      | "int64" -> sourceOf tryParseInt64 (Some id) resolved.Int64 resolved.Configured
+      | "float" -> sourceOf tryParseFloat None resolved.Float resolved.Configured
+      | _ -> sourceOf (fun s -> Some s) None resolved.String resolved.Configured
     Virtual.CreateOrdinalFrame(keys, keys |> List.map makeColumn)
 
 namespace Deedle.Virtual
 
 open System.IO
+open Deedle
 open Deedle.Virtual.Sources
 
 [<AutoOpen>]
 module VirtualCsvExtensions =
-  let private searchColumnOption searchColumn searchLookupRange =
-    match searchColumn with
-    | None -> None
-    | Some name ->
-        match searchLookupRange with
-        | Some mode -> Some(name, mode)
-        | None -> Some(name, LookupRangeUnsupported)
+  let private buildReadCsvOptions indexColumn searchColumns columnKeys byteOffsetIndex hasHeaders =
+    { IndexColumn = indexColumn
+      SearchColumns = defaultArg searchColumns []
+      ColumnKeys = columnKeys
+      ByteOffsetIndex = defaultArg byteOffsetIndex true
+      HasHeaders = defaultArg hasHeaders true }
 
   type Virtual with
-    /// Load a CSV file as a virtual frame with an ordered row index.
-    /// The index column defaults to `Timestamp` / `DateTime` / first date-like column when not specified.
-    static member ReadCsv(path: string, ?indexColumn: string, ?searchColumn: string, ?searchLookupRange: LookupRangeMode<string>, ?columnKeys: string list, ?byteOffsetIndex: bool) =
-      let options : VirtualReadCsvOptions =
-        { IndexColumn = indexColumn
-          SearchColumn = searchColumnOption searchColumn searchLookupRange
-          ColumnKeys = columnKeys
-          ByteOffsetIndex = defaultArg byteOffsetIndex false }
-      VirtualCsvSource.createFrame path options
+    /// Load a CSV file as a virtual frame with ordinal row index `0 .. N-1`.
+    static member ReadCsv(path: string, ?searchColumns: VirtualSearchColumn list, ?columnKeys: string list, ?byteOffsetIndex: bool, ?hasHeaders: bool) : Frame<int64, string> =
+      VirtualCsvSource.createOrdinalFrame path (buildReadCsvOptions None searchColumns columnKeys byteOffsetIndex hasHeaders)
+
+    /// Load a CSV file as a virtual frame.
+    /// When `indexColumn` is set, that column becomes the row index only if it is strictly increasing and unique in file order; otherwise an ordinal index is used (trace warning).
+    /// Specify the row key type explicitly (for example `DateTimeOffset` for a timestamp column).
+    [<RequiresExplicitTypeArguments>]
+    static member ReadCsv<'R when 'R : equality>(path: string, indexColumn: string, ?searchColumns: VirtualSearchColumn list, ?columnKeys: string list, ?byteOffsetIndex: bool, ?hasHeaders: bool) : Frame<'R, string> =
+      VirtualCsvSource.createFrame path (buildReadCsvOptions (Some indexColumn) searchColumns columnKeys byteOffsetIndex hasHeaders)
+      |> unbox<Frame<'R, string>>
 
     /// Load matching CSV files in a directory as one ordinal virtual frame (files sorted by name).
     /// Rows are addressed 0 .. N-1 across files; all files must share the first file's header.
     static member ReadCsvDirectory
         ( directory: string,
           ?searchPattern: string,
-          ?searchColumn: string,
-          ?searchLookupRange: LookupRangeMode<string>,
+          ?searchColumns: VirtualSearchColumn list,
           ?columnKeys: string list,
-          ?byteOffsetIndex: bool ) =
+          ?byteOffsetIndex: bool,
+          ?hasHeaders: bool ) =
       if not (Directory.Exists directory) then
         raise (DirectoryNotFoundException(sprintf "VirtualCsvSource: directory not found '%s'" directory))
       let pattern = defaultArg searchPattern "*.csv"
       let files = Directory.GetFiles(directory, pattern) |> Array.sort
       if files.Length = 0 then invalidArg "directory" (sprintf "No files matching '%s' in '%s'" pattern directory)
-      let options : VirtualReadCsvOptions =
-        { IndexColumn = None
-          SearchColumn = searchColumnOption searchColumn searchLookupRange
-          ColumnKeys = columnKeys
-          ByteOffsetIndex = defaultArg byteOffsetIndex false }
-      VirtualCsvSource.createConcatenatedFrame files options
+      VirtualCsvSource.createConcatenatedFrame files (buildReadCsvOptions None searchColumns columnKeys byteOffsetIndex hasHeaders)

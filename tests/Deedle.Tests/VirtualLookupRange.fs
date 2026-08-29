@@ -36,13 +36,19 @@ module private Range =
 [<Test>]
 let ``forRepeatingCycle returns step offset for known value`` () =
   match VirtualLookupRange.forRepeatingCycle [| "a"; "b"; "c" |] with
-  | LookupRangeStep f -> f "b" |> shouldEqual (1, 3)
+  | LookupRangeStep f ->
+      f "b" |> shouldEqual (1, 3)
+      VirtualLookupRange.classifyLookupRange (VirtualLookupRange.forRepeatingCycle [| "a"; "b"; "c" |])
+      |> shouldEqual (VirtualColumnLookupRange.Step 3)
   | _ -> failwith "expected LookupRangeStep"
 
 [<Test>]
 let ``forRepeatingCycle returns empty range for unknown value`` () =
   match VirtualLookupRange.forRepeatingCycle [| "a"; "b" |] with
-  | LookupRangeStep f -> f "missing" |> shouldEqual (-1, 2)
+  | LookupRangeStep f ->
+      f "missing" |> shouldEqual (-1, 2)
+      VirtualLookupRange.classifyLookupRange (VirtualLookupRange.forRepeatingCycle [| "a"; "b" |])
+      |> shouldEqual (VirtualColumnLookupRange.Step 2)
   | _ -> failwith "expected LookupRangeStep"
 
 [<Test>]
@@ -55,8 +61,9 @@ let ``tryInferStringLookupRange returns None for empty column`` () =
 let ``tryInferStringLookupRange infers repeating cycle for periodic strings`` () =
   let valueAt i = if i % 2L = 0L then "x" else "y"
   match VirtualLookupRange.tryInferStringLookupRange 10L valueAt with
-  | Some(_, desc) -> desc |> should haveSubstring "repeating cycle"
-  | None -> failwith "expected inference"
+  | Some (mode, _) ->
+      VirtualLookupRange.classifyLookupRange mode |> shouldEqual (VirtualColumnLookupRange.Step 2)
+  | None -> failwith "expected inference to produce a LookupRange mode"
 
 [<Test>]
 let ``tryInferStringLookupRange returns None when distinct count exceeds cap`` () =
@@ -66,13 +73,62 @@ let ``tryInferStringLookupRange returns None when distinct count exceeds cap`` (
   |> shouldEqual true
 
 [<Test>]
-let ``resolveSearchColumnLookupRange returns None for non-search columns`` () =
-  VirtualLookupRange.resolveSearchColumnLookupRange
-    "Test.Read"
-    (Some("Category", LookupRangeUnsupported))
-    "Id"
-    false
+let ``resolveSearchColumnsLookupRange returns empty for non-search columns`` () =
+  let searchColumns = [ VirtualSearchColumn.infer "Category" ]
+  VirtualLookupRange.resolveSearchColumnsLookupRange
+    "Test.Read" searchColumns "Id" "string"
     (fun () -> Some(VirtualLookupRange.forRepeatingCycle [| "a" |], "cycle"))
+    (fun () -> None) (fun () -> None)
+  |> fun resolved -> resolved.String.IsNone
+  |> shouldEqual true
+
+[<Test>]
+let ``resolveSearchColumnsLookupRange configures search columns on frames`` () =
+  let path = Path.GetTempFileName() + ".csv"
+  try
+    File.WriteAllLines(path, [| "Category,Code"; "a,1"; "b,2"; "a,3" |])
+    let frame =
+      Virtual.ReadCsv(
+        path,
+        searchColumns =
+          [ VirtualSearchColumn.infer "Category"
+            VirtualSearchColumn.withInt64 "Code" (VirtualLookupRange.forRepeatingCycle [| 1L; 2L; 3L |]) ],
+        columnKeys = [ "Category"; "Code" ])
+    match Virtual.TryGetLookupRange(frame, "Category") with
+    | Some (VirtualColumnLookupRange.Step _) | Some VirtualColumnLookupRange.IndexList -> ()
+    | actual -> Assert.Fail(sprintf "expected Category Step or IndexList, got %A" actual)
+    Virtual.TryGetLookupRange(frame, "Code") |> shouldEqual (Some (VirtualColumnLookupRange.Step 3))
+  finally
+    if File.Exists path then File.Delete path
+
+[<Test>]
+let ``tryInferInt64LookupRange infers Step for repeating cycle`` () =
+  let valueAt i = Some (i % 3L + 1L)
+  match VirtualLookupRange.tryInferInt64LookupRange 12L valueAt with
+  | Some (mode, _) ->
+      VirtualLookupRange.classifyLookupRange mode |> shouldEqual (VirtualColumnLookupRange.Step 3)
+  | None -> failwith "expected inference to produce a LookupRange mode"
+
+[<Test>]
+let ``tryInferInt64LookupRange builds IndexList for non-cyclic low cardinality`` () =
+  let valueAt i = Some (if i < 4L then i else 99L)
+  match VirtualLookupRange.tryInferInt64LookupRange 8L valueAt with
+  | Some (mode, _) ->
+      VirtualLookupRange.classifyLookupRange mode |> shouldEqual VirtualColumnLookupRange.IndexList
+  | None -> failwith "expected inference to produce a LookupRange mode"
+
+[<Test>]
+let ``tryInferInt64LookupRange infers Step for int64 modulo cycle`` () =
+  let valueAt i = Some (i % 4L)
+  match VirtualLookupRange.tryInferInt64LookupRange 20L valueAt with
+  | Some (mode, _) ->
+      VirtualLookupRange.classifyLookupRange mode |> shouldEqual (VirtualColumnLookupRange.Step 4)
+  | None -> failwith "expected inference to produce a LookupRange mode"
+
+[<Test>]
+let ``tryInferFloatLookupRange returns None for high cardinality`` () =
+  let valueAt i = Some (float i)
+  VirtualLookupRange.tryInferFloatLookupRange 100L valueAt
   |> Option.isNone
   |> shouldEqual true
 
@@ -484,14 +540,16 @@ let ``Can return same row count for ordinal and ordered Step filters`` () =
   ordinalCount |> shouldEqual (int ((n - 1L) / int64 8) + 1)
 
 [<Test>]
-let ``ordinal filterRowsBy without LookupRange throws NotSupportedException`` () =
+let ``ordinal filterRowsBy without LookupRange scans rows and stays virtual`` () =
   let words = "lorem ipsum dolor sit amet".Split(' ')
   let c = AccessCounters()
   let s2 = InstrumentedOrdinalSource<string>(100L, (fun i -> words.[int (i % int64 words.Length)]), c, hasMissing=false)
   let _, s1 = InstrumentedOrdinalSource.createLongs 100L
   let frame = Virtual.CreateOrdinalFrame(["S1"; "S2"], [s1 :> IVirtualVectorSource; s2 :> IVirtualVectorSource])
-  (fun () -> frame |> Frame.filterRowsBy "S2" "lorem" |> ignore)
-  |> should throw typeof<NotSupportedException>
+  c.Reset()
+  let filtered = frame |> Frame.filterRowsBy "S2" "lorem"
+  FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
+  filtered.RowCount |> should be (greaterThan 0)
 
 [<Test>]
 let ``Can filter ordinal row index when LookupRange is configured`` () =

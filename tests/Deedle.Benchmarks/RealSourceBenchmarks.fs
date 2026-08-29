@@ -33,20 +33,18 @@ type RealSourceBenchmarks() =
         CsvTestData.ensureSearchCsv csvPath n |> ignore
         ParquetTestData.ensureSearchParquet parquetPath n |> ignore
         virtualFrame <-
-            Virtual.ReadCsv(
+            Virtual.ReadCsv<DateTimeOffset>(
                 csvPath,
                 indexColumn = "Timestamp",
-                searchColumn = "Category",
-                searchLookupRange = VirtualLookupRange.forRepeatingCycle CsvTestData.words8,
-                columnKeys = [ "Id"; "Category" ])
+                searchColumns = [ VirtualSearchColumn.withString "Category" (VirtualLookupRange.forRepeatingCycle CsvTestData.words8) ],
+                columnKeys = [ "Id"; "Category"; "Label"; "Value" ])
         virtualFloatSeries <- CsvTestData.createFloatValueSeries csvPath
         virtualParquetFrame <-
             Virtual.ReadParquet(
                 parquetPath,
                 indexColumn = "Timestamp",
-                searchColumn = "Category",
-                searchLookupRange = VirtualLookupRange.forRepeatingCycle CsvTestData.words8,
-                columnKeys = [ "Id"; "Category" ])
+                searchColumns = [ VirtualSearchColumn.withString "Category" (VirtualLookupRange.forRepeatingCycle CsvTestData.words8) ],
+                columnKeys = [ "Id"; "Category"; "Label"; "Value" ])
         virtualParquetFloatSeries <- ParquetTestData.createFloatValueSeries parquetPath
         materializedFrame <- Frame.ReadCsv(csvPath, inferRows=100)
 

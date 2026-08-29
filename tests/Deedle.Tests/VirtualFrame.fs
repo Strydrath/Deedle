@@ -846,8 +846,133 @@ let ``Can materialize float batches with empty column list`` () =
   let frame = Virtual.CreateOrdinalFrame(["A"], [ src :> IVirtualVectorSource ])
   let batch = Virtual.MaterializeFloatBatches(frame, 5L, []) |> Seq.head
   batch.Features.Length |> shouldEqual 5
+  batch.Cols |> shouldEqual 0
   batch.Features.[0].Length |> shouldEqual 0
+  batch.FeaturesFlat.Length |> shouldEqual 0
   batch.RowKeys |> shouldEqual None
+
+[<Test>]
+let ``Can materialize float batches with labels and missing mask`` () =
+  let len = 6L
+  let srcX =
+    InstrumentedOrdinalSource<float>(len, (fun i -> float i), AccessCounters(), hasMissing = false)
+    :> IVirtualVectorSource
+  let srcY =
+    InstrumentedOrdinalSource<float>(len, (fun i -> float i * 10.0), AccessCounters(), hasMissing = true, addrMap = id)
+    :> IVirtualVectorSource
+  let frame = Virtual.CreateOrdinalFrame([ "X"; "Y" ], [ srcX; srcY ])
+  let batch =
+    Virtual.MaterializeFloatBatches(
+      frame,
+      len,
+      [ "X" ],
+      labelsColumn = "Y",
+      includeMissingMask = true)
+    |> Seq.head
+  batch.FeaturesFlat.[0] |> shouldEqual 0.0
+  batch.Labels.Value.[1] |> shouldEqual 10.0
+  batch.MissingMask.Value.[0] |> shouldEqual false
+  Double.IsNaN batch.Labels.Value.[3] |> shouldEqual true
+
+[<Test>]
+let ``Can materialize float batches from int64 columns`` () =
+  let len = 4L
+  let src =
+    InstrumentedOrdinalSource<int64>(len, (fun i -> i + 1L), AccessCounters(), hasMissing = false)
+    :> IVirtualVectorSource
+  let frame = Virtual.CreateOrdinalFrame([ "A" ], [ src ])
+  let batch = Virtual.MaterializeFloatBatches(frame, len, [ "A" ]) |> Seq.head
+  batch.FeaturesFlat.[0] |> shouldEqual 1.0
+  batch.FeaturesFlat.[3] |> shouldEqual 4.0
+
+[<Test>]
+let ``Can materialize column-major float batches`` () =
+  let len = 3L
+  let srcA =
+    InstrumentedOrdinalSource<float>(len, (fun i -> float i), AccessCounters(), hasMissing = false)
+    :> IVirtualVectorSource
+  let srcB =
+    InstrumentedOrdinalSource<float>(len, (fun i -> float i + 100.0), AccessCounters(), hasMissing = false)
+    :> IVirtualVectorSource
+  let frame = Virtual.CreateOrdinalFrame([ "A"; "B" ], [ srcA; srcB ])
+  let batch =
+    Virtual.MaterializeFloatBatches(frame, len, [ "A"; "B" ], layout = FloatBatchLayout.ColumnMajor)
+    |> Seq.head
+  batch.FeaturesFlat.[0] |> shouldEqual 0.0
+  batch.FeaturesFlat.[1] |> shouldEqual 1.0
+  batch.FeaturesFlat.[2] |> shouldEqual 2.0
+  batch.FeaturesFlat.[3] |> shouldEqual 100.0
+
+[<Test>]
+let ``Can cap float batch export with maxRows`` () =
+  let len = 20L
+  let src =
+    InstrumentedOrdinalSource<float>(len, (fun i -> float i), AccessCounters(), hasMissing = false)
+    :> IVirtualVectorSource
+  let frame = Virtual.CreateOrdinalFrame([ "A" ], [ src ])
+  let batches =
+    Virtual.MaterializeFloatBatches(frame, 7L, [ "A" ], maxRows = 15L)
+    |> Seq.toArray
+  batches.Length |> shouldEqual 3
+  batches.[0].Rows |> shouldEqual 7
+  batches.[1].Rows |> shouldEqual 7
+  batches.[2].Rows |> shouldEqual 1
+
+[<Test>]
+let ``Can materialize random float batches covering each row exactly once`` () =
+  let len = 25L
+  let batchSize = 7L
+  let src =
+    InstrumentedOrdinalSource<float>(len, (fun i -> float i), AccessCounters(), hasMissing = false)
+    :> IVirtualVectorSource
+  let frame = Virtual.CreateOrdinalFrame([ "A" ], [ src ])
+  let allValues =
+    Virtual.MaterializeFloatBatches(
+      frame,
+      batchSize,
+      [ "A" ],
+      order = FloatBatchOrder.ShuffledWithSeed 42)
+    |> Seq.collect (fun b -> b.FeaturesFlat)
+    |> Seq.toArray
+  allValues.Length |> shouldEqual 25
+  allValues |> Array.sort |> shouldEqual [| for i in 0.0 .. 24.0 -> i |]
+
+[<Test>]
+let ``Can reproduce random float batches with a fixed seed`` () =
+  let len = 12L
+  let src =
+    InstrumentedOrdinalSource<float>(len, (fun i -> float i), AccessCounters(), hasMissing = false)
+    :> IVirtualVectorSource
+  let frame = Virtual.CreateOrdinalFrame([ "A" ], [ src ])
+  let first seed =
+    Virtual.MaterializeFloatBatches(frame, 4L, [ "A" ], order = FloatBatchOrder.ShuffledWithSeed seed)
+    |> Seq.head
+    |> fun b -> b.FeaturesFlat |> Array.copy
+  first 7 |> shouldEqual (first 7)
+  first 7 |> should not' (equal (first 8))
+
+[<Test>]
+let ``Can materialize random float batches lazily one batch at a time`` () =
+  let len = 100L
+  let batchSize = 10L
+  let counters = AccessCounters()
+  let src =
+    InstrumentedOrdinalSource<float>(len, (fun i -> float i), counters, hasMissing = false)
+    :> IVirtualVectorSource
+  let frame = Virtual.CreateOrdinalFrame([ "A" ], [ src ])
+  let batches =
+    Virtual.MaterializeFloatBatches(
+      frame,
+      batchSize,
+      [ "A" ],
+      order = FloatBatchOrder.ShuffledWithSeed 1)
+  counters.ValueAtCount |> shouldEqual 0
+  use e = batches.GetEnumerator()
+  e.MoveNext() |> shouldEqual true
+  e.Current.Rows |> shouldEqual 10
+  counters.ValueAtCount |> shouldEqual 10
+  e.MoveNext() |> shouldEqual true
+  counters.ValueAtCount |> shouldEqual 20
 
 [<Test>]
 let ``Can throw when CreateOrdinalFrame has zero-length sources`` () =

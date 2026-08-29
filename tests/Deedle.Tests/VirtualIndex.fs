@@ -162,13 +162,18 @@ let ``Can filter ordinal virtual frame via LookupRange without ValueAt`` () =
   FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
 
 [<Test>]
-let ``Can throw when ordinal filterRowsBy has no LookupRange`` () =
+let ``Can filter ordinal frame via scan when column has no LookupRange`` () =
   let words = "lorem ipsum dolor sit amet".Split(' ')
-  let s2 = InstrumentedOrdinalSource<string>(100L, (fun i -> words.[int (i % int64 words.Length)]), AccessCounters(), hasMissing=false)
+  let c = AccessCounters()
+  let s2 =
+    InstrumentedOrdinalSource<string>(100L, (fun i -> words.[int (i % int64 words.Length)]), c, hasMissing=false)
   let _, s1 = InstrumentedOrdinalSource.createLongs 100L
   let frame = Virtual.CreateOrdinalFrame(["S1"; "S2"], [s1 :> IVirtualVectorSource; s2 :> IVirtualVectorSource])
-  (fun () -> frame |> Frame.filterRowsBy "S2" "lorem" |> ignore)
-  |> should throw typeof<NotSupportedException>
+  c.Reset()
+  let filtered = frame |> Frame.filterRowsBy "S2" "lorem"
+  FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
+  filtered.RowCount |> should be (greaterThan 0)
+  c.Snapshot().ValueAtCount |> should be (greaterThan 0)
 
 [<Test>]
 let ``Can filter virtual frame to empty result when no rows match`` () =
