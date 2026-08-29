@@ -24,12 +24,3 @@ pkg/
 *.ide
 *.VisualState.xml
 TestResult*.xml
-
-# BenchmarkDotNet output — archive dated runs under big-deedle/bench-artifacts/, do not commit here
-BenchmarkDotNet.Artifacts/
-# Generated virtual-source fixtures (built by tests/benches)
-tests/**/data/*.parquet
-tests/**/data/b6-search-*.csv
-tests/**/data/b6-search-*.csv.meta
-
-.nuget-packages
