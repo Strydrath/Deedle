@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Deedle.CheckpointEvaluation</AssemblyName>
+    <Checkpoint Condition="'$(Checkpoint)' == ''">CP6</Checkpoint>
+    <DefineConstants Condition="'$(Checkpoint)' == 'CP1'">$(DefineConstants);CHECKPOINT_CP1</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../Deedle.Tests/VirtualInstrumentation.fs">
+      <Link>VirtualInstrumentation.fs</Link>
+    </Compile>
+    <Compile Include="CheckpointCsvFixture.fs" />
+    <Compile Include="../Common/CsvTestData.fs" Condition="'$(Checkpoint)' != 'CP1'">
+      <Link>CsvTestData.fs</Link>
+    </Compile>
+    <Compile Include="../Common/ParquetTestData.fs" Condition="'$(Checkpoint)' != 'CP1'">
+      <Link>ParquetTestData.fs</Link>
+    </Compile>
+    <Compile Include="CheckpointMeasure.fs" />
+    <Compile Include="CheckpointOperations.fs" />
+    <Compile Include="Program.fs" />
+    <None Include="paket.references" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Deedle\Deedle.fsproj" />
+    <ProjectReference Include="..\..\src\Deedle.Parquet\Deedle.Parquet.fsproj" Condition="'$(Checkpoint)' != 'CP1'" />
+  </ItemGroup>
+  <Import Project="..\..\.paket\Paket.Restore.targets" />
+</Project>

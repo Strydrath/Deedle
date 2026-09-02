@@ -571,7 +571,7 @@ type VirtualVectorBuilder() =
       // Public Series.AsyncMaterialize / Materialize first turn the index linear,
       // so this path receives LinearAddressingScheme and delegates to ArrayVector.
       // There is no async protocol on IVirtualVectorSource, so a virtual scheme
-      // cannot be built asynchronously — call Series.Materialize() instead.
+      // cannot be built asynchronously ï¿½ call Series.Materialize() instead.
       if scheme = LinearAddressingScheme.Instance then
         baseBuilder.AsyncBuild<'T>(scheme, cmd, args)
       else
