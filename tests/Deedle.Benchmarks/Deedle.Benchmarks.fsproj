@@ -21,6 +21,7 @@
     <Compile Include="Benchmarks.fs" />
     <Compile Include="VirtualBenchmarks.fs" />
     <Compile Include="RealSourceBenchmarks.fs" />
+    <Compile Include="RealSourceScaleBenchmarks.fs" />
     <Compile Include="Program.fs" />
     <None Include="paket.references" />
   </ItemGroup>

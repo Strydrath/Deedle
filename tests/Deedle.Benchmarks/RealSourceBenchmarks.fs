@@ -17,6 +17,8 @@ type RealSourceBenchmarks() =
 
     let n = 100_000L
     let searchValue = "lorem"
+    // Wrong period (5, not the true 8): stays cheap/virtual but returns an incorrect row set.
+    let wrongCategoryCycle = CsvTestData.words8.[0 .. 4]
     let dataDir = Path.Combine(__SOURCE_DIRECTORY__, "data")
     let csvPath = Path.Combine(dataDir, CsvTestData.defaultDatasetName)
     let parquetPath = Path.Combine(dataDir, ParquetTestData.defaultDatasetName)
@@ -26,6 +28,8 @@ type RealSourceBenchmarks() =
     let mutable virtualFloatSeries : Series<int64, float> = Unchecked.defaultof<_>
     let mutable virtualParquetFloatSeries : Series<int64, float> = Unchecked.defaultof<_>
     let mutable materializedFrame : Frame<int, string> = Unchecked.defaultof<_>
+    let mutable virtualCsvWrongStepFrame : Frame<DateTimeOffset, string> = Unchecked.defaultof<_>
+    let mutable virtualParquetWrongStepFrame : Frame<DateTimeOffset, string> = Unchecked.defaultof<_>
 
     [<GlobalSetup>]
     member _.Setup() =
@@ -47,6 +51,19 @@ type RealSourceBenchmarks() =
                 columnKeys = [ "Id"; "Category"; "Label"; "Value" ])
         virtualParquetFloatSeries <- ParquetTestData.createFloatValueSeries parquetPath
         materializedFrame <- Frame.ReadCsv(csvPath, inferRows=100)
+        // Deliberately wrong LookupRange config (RQ2): declared period 5 against a true period-8 column.
+        virtualCsvWrongStepFrame <-
+            Virtual.ReadCsv<DateTimeOffset>(
+                csvPath,
+                indexColumn = "Timestamp",
+                searchColumns = [ VirtualSearchColumn.withString "Category" (VirtualLookupRange.forRepeatingCycle wrongCategoryCycle) ],
+                columnKeys = [ "Id"; "Category"; "Label"; "Value" ])
+        virtualParquetWrongStepFrame <-
+            Virtual.ReadParquet(
+                parquetPath,
+                indexColumn = "Timestamp",
+                searchColumns = [ VirtualSearchColumn.withString "Category" (VirtualLookupRange.forRepeatingCycle wrongCategoryCycle) ],
+                columnKeys = [ "Id"; "Category"; "Label"; "Value" ])
 
     [<Benchmark>]
     member _.VirtualCsv_FilterRowsBy2_Step() =
@@ -102,3 +119,28 @@ type RealSourceBenchmarks() =
     member _.MaterializedReadParquet_StatsSum() =
         let frame = Frame.readParquet parquetPath
         Stats.sum (frame.GetColumn<float>("Value")) |> ignore
+
+    // --- RQ2: deliberately wrong LookupRange metadata (declared period 5 vs true period 8) --------
+
+    /// Stays virtual and cheap, but returns the wrong row set (see VirtualCsvWrongLookupRange tests
+    /// for the row-count correctness check).
+    [<Benchmark>]
+    member _.Csv_FilterRowsBy_Category_WrongStep() =
+        virtualCsvWrongStepFrame |> Frame.filterRowsBy "Category" searchValue |> ignore
+
+    [<Benchmark>]
+    member _.Parquet_FilterRowsBy_Category_WrongStep() =
+        virtualParquetWrongStepFrame |> Frame.filterRowsBy "Category" searchValue |> ignore
+
+    // --- Parquet decode vs. sum decomposition (explains VirtualParquet_StatsSum cost) -------------
+
+    /// Sum only: series decoded once in Setup, isolates the aggregation cost from column decode.
+    [<Benchmark>]
+    member _.VirtualParquet_StatsSum_CachedSeries() =
+        Stats.sum virtualParquetFloatSeries |> ignore
+
+    /// Decode only: constructs the file index and reads the Value column, no aggregation.
+    [<Benchmark>]
+    member _.VirtualParquet_ColumnDecodeOnly() =
+        use fileIndex = new ParquetFileIndex(parquetPath)
+        fileIndex.ReadFloatColumn "Value" |> ignore

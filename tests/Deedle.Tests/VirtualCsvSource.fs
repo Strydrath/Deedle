@@ -119,6 +119,23 @@ let ``Can read large search CSV with virtual row index`` () =
   filtered.RowCount |> shouldEqual 12_500
 
 [<Test; NonParallelizable>]
+let ``ReadCsv with wrong Step LookupRange stays virtual but returns an incorrect row count`` () =
+  // RQ2 correctness check: Category cycles with true period 8, but the search column is
+  // configured with a declared period of 5. The filter remains cheap and virtual, but the
+  // returned row count no longer matches the true "lorem" match count (12,500 of 100,000).
+  SearchDataset.ensureCsv()
+  let wrongCycle = CsvTestData.words8.[0 .. 4]
+  let frame =
+    Virtual.ReadCsv<DateTimeOffset>(
+      SearchDataset.csvPath,
+      indexColumn = "Timestamp",
+      searchColumns = [ VirtualSearchColumn.withString "Category" (VirtualLookupRange.forRepeatingCycle wrongCycle) ],
+      columnKeys = [ "Id"; "Category" ])
+  let filtered = frame |> Frame.filterRowsBy "Category" SearchDataset.searchValue
+  FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
+  filtered.RowCount |> should not' (equal 12_500)
+
+[<Test; NonParallelizable>]
 let ``ReadCsv without indexColumn uses ordinal virtual row index`` () =
   let csvPath = Path.Combine(Path.GetTempPath(), "deedle-csv-ordinal-default.csv")
   CsvTestData.ensureSearchCsv csvPath 1000L |> ignore

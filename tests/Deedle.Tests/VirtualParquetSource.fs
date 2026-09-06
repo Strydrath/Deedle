@@ -69,6 +69,21 @@ let ``Can infer Step LookupRange on Parquet Category column`` () =
   FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
 
 [<Test; NonParallelizable>]
+let ``ReadParquet with wrong Step LookupRange stays virtual but returns an incorrect row count`` () =
+  // RQ2 correctness check, Parquet side of the CSV test in VirtualCsvSource.fs.
+  SearchDataset.ensureParquet()
+  let wrongCycle = CsvTestData.words8.[0 .. 4]
+  let frame =
+    Virtual.ReadParquet(
+      SearchDataset.parquetPath,
+      indexColumn = "Timestamp",
+      searchColumns = [ VirtualSearchColumn.withString "Category" (VirtualLookupRange.forRepeatingCycle wrongCycle) ],
+      columnKeys = [ "Id"; "Category" ])
+  let filtered = frame |> Frame.filterRowsBy "Category" "lorem"
+  FrameProbe.rowIndexIsVirtual filtered |> shouldEqual true
+  filtered.RowCount |> should not' (equal 12_500)
+
+[<Test; NonParallelizable>]
 let ``ReadParquet can filterRowsBy on non-search columns via scan fallback`` () =
   SearchDataset.ensureParquet()
   let frame =
