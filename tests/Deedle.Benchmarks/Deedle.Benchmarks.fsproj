@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Benchmarks.fs" />
+    <Compile Include="RealSourceMaterializedBenchmarks.fs" />
     <Compile Include="Program.fs" />
     <None Include="paket.references" />
   </ItemGroup>
