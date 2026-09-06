@@ -18,6 +18,7 @@ type RealSourceBenchmarks() =
     let csvPath = Path.Combine(__SOURCE_DIRECTORY__, "data", CsvLineIndex.defaultDatasetName)
 
     let mutable virtualFrame : Frame<DateTimeOffset, string> = Unchecked.defaultof<_>
+    let mutable virtualFrameWrongStep : Frame<DateTimeOffset, string> = Unchecked.defaultof<_>
     let mutable virtualFloatSeries : Series<int64, float> = Unchecked.defaultof<_>
     let mutable materializedFrame : Frame<int, string> = Unchecked.defaultof<_>
     let mutable counters : AccessCounters = Unchecked.defaultof<_>
@@ -30,6 +31,9 @@ type RealSourceBenchmarks() =
         counters <- AccessCounters()
         let _, vf, _ = CsvFileVirtualSource.createOrderedSearchFrame csvPath counters
         virtualFrame <- vf
+        // True Category cycle length is CsvLineIndex.words8.Length (8); declare 5 instead (RQ2).
+        let _, vfWrong, _ = CsvFileVirtualSource.createOrderedSearchFrameWithStep csvPath counters 5
+        virtualFrameWrongStep <- vfWrong
         let _, fs = CsvFileVirtualSource.createFloatValueSeries csvPath counters
         virtualFloatSeries <- fs
         materializedFrame <- Frame.ReadCsv(csvPath, inferRows=100)
@@ -38,6 +42,13 @@ type RealSourceBenchmarks() =
     member _.VirtualCsv_FilterRowsBy_Step() =
         counters.Reset()
         virtualFrame |> Frame.filterRowsBy "S2" searchValue |> ignore
+
+    /// RQ2 (non-synthetic): wrong LookupRangeStep still resolves to a virtual sub-range,
+    /// just an incorrect one (silently wrong row count) instead of forcing materialization.
+    [<Benchmark>]
+    member _.VirtualCsv_FilterRowsBy_Category_WrongStep() =
+        counters.Reset()
+        virtualFrameWrongStep |> Frame.filterRowsBy "S2" searchValue |> ignore
 
     [<Benchmark>]
     member _.VirtualCsv_Slice1000() =

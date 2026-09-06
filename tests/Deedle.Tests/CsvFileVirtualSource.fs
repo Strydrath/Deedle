@@ -270,7 +270,9 @@ module CsvFileVirtualSource =
     CsvFileVirtualSource(index.Length, valueAt, counters, ?asLong=asLong, ?lookupRange=lookupRange)
 
   /// Ordered virtual frame backed by CSV columns (Timestamp index, Id + Category search).
-  let createOrderedSearchFrame (csvPath: string) (counters: AccessCounters) =
+  /// `declaredStep` lets callers lie about the true cycle length of the Category column
+  /// (`CsvLineIndex.words8.Length` = 8) to exercise a wrong-`LookupRangeStep` scenario.
+  let createOrderedSearchFrameWithStep (csvPath: string) (counters: AccessCounters) (declaredStep: int) =
     let lineIndex = CsvLineIndex(csvPath)
     let words = CsvLineIndex.words8
     let idx =
@@ -280,10 +282,14 @@ module CsvFileVirtualSource =
       createColumn lineIndex 0 (fun s -> int64 (parseInt s)) counters (Some id) None
     let s2 =
       createColumn lineIndex 2 parseString counters None
-        (Some (LookupRangeStep (fun v -> words |> Array.findIndex ((=) v), words.Length)))
+        (Some (LookupRangeStep (fun v -> words |> Array.findIndex ((=) v), declaredStep)))
     let frame =
       Virtual.CreateFrame(idx, ["S1"; "S2"], [s1 :> IVirtualVectorSource; s2 :> IVirtualVectorSource])
     counters, frame, words
+
+  /// Ordered virtual frame backed by CSV columns (Timestamp index, Id + Category search).
+  let createOrderedSearchFrame (csvPath: string) (counters: AccessCounters) =
+    createOrderedSearchFrameWithStep csvPath counters CsvLineIndex.words8.Length
 
   let createFloatValueSeries (csvPath: string) (counters: AccessCounters) =
     let lineIndex = CsvLineIndex(csvPath)
